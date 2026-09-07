@@ -10234,7 +10234,14 @@
       "folders_load_failed": "ফোল্ডার লোড করা যায়নি",
       "columns_load_failed": "বোর্ড কলাম লোড করা যায়নি",
       "folder_update_failed": "ফোল্ডার আপডেট ব্যর্থ",
-      "board_update_failed": "বোর্ড আপডেট ব্যর্থ"
+      "board_update_failed": "বোর্ড আপডেট ব্যর্থ",
+      "remote_sessions_not_shown_in_board_view_one": "বোর্ড ভিউতে {{count}}টি রিমোট সেশন দেখানো হয় না — বোর্ডের কলামগুলি শুধুমাত্র স্থানীয় সেশন পরিচালনা করে।",
+      "remote_sessions_not_shown_in_board_view_other": "বোর্ড ভিউতে {{count}}টি রিমোট সেশন দেখানো হয় না — বোর্ডের কলামগুলি শুধুমাত্র স্থানীয় সেশন পরিচালনা করে।",
+      "sessions_from_instance_unavailable": "{{names}} থেকে সেশনগুলি এই মুহূর্তে অনুপলব্ধ।",
+      "checking_remote_instances": "রিমোট ইনস্ট্যান্স যাচাই করা হচ্ছে…",
+      "opens_the_instance_dashboard": "এই সেশন নয়, {{name}}-এর ড্যাশবোর্ড খোলে",
+      "row_opens_instance_dashboard": "{{name}}-এর ড্যাশবোর্ড খোলে",
+      "remote_instances_list_unavailable": "রিমোট ইনস্ট্যান্স তালিকাভুক্ত করা যায়নি, তাই সেগুলির সেশন দেখানো হচ্ছে না।"
     },
     "connectionsPage": {
       "action_failed": "অ্যাকশন ব্যর্থ: {{error}}",
@@ -10618,6 +10625,8 @@
         "open_webhooks": "ওয়েবহুক খুলুন",
         "the_crew_members_page_and_crew_mode_chats_both_a": "ক্রু সদস্যরা পেজ এবং Crew Mode চ্যাট। দুটোই এখনও তৈরি হচ্ছে, তাই এটি চালু না করা পর্যন্ত কোনোটিই দেখানো হবে না।",
         "webhooks": "ওয়েবহুক",
+        "remote_instance_sessions": "রিমোট ইনস্ট্যান্সের সেশন",
+        "merge_a_connected_remote_instances_live_sessions": "সংযুক্ত রিমোট ইনস্ট্যান্সের চলমান সেশনগুলি সেশন তালিকায় একত্রিত করে, প্রতিটির সঙ্গে একটি সার্ভার ব্যাজ দেখায়। কাজ করে, তবে এখনও সম্পূর্ণ নয়।",
         "intro": {
           "webhooks_summary": "অন্য কোনো সিস্টেম (CI, রিভিউ বট, ডিপ্লয় পাইপলাইন) Webhooks পেজে তৈরি access token দিয়ে একটি মেসেজ পাঠিয়ে তোমার হয়ে এজেন্ট চালাতে পারে।",
           "webhooks_where": "এটি চালু করলে সেটিংসে এই কার্ডে “Webhooks খোলো” লিংক দেখা যায়; নতুন Webhooks পেজ সেখান থেকেই খোলে। পেজ শেষ না হওয়া পর্যন্ত এটি সাইডবারে দেখায় না। বন্ধ করলে পেজটি আবার লুকিয়ে যায় মাত্র; তোমার তৈরি token থেকে যায়।",

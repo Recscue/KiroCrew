@@ -10079,7 +10079,13 @@
       "folders_load_failed": "フォルダーを読み込めませんでした",
       "columns_load_failed": "ボードの列を読み込めませんでした",
       "folder_update_failed": "フォルダーの更新に失敗しました",
-      "board_update_failed": "ボードの更新に失敗しました"
+      "board_update_failed": "ボードの更新に失敗しました",
+      "remote_sessions_not_shown_in_board_view_other": "ボード列はローカルセッションのみを管理するため、リモートセッション {{count}} 件はボードビューに表示されません。",
+      "sessions_from_instance_unavailable": "{{names}} のセッションは現在利用できません。",
+      "checking_remote_instances": "リモートインスタンスを確認しています…",
+      "opens_the_instance_dashboard": "このセッションではなく {{name}} のダッシュボードを開きます",
+      "row_opens_instance_dashboard": "{{name}} のダッシュボードを開きます",
+      "remote_instances_list_unavailable": "リモートインスタンスを一覧取得できなかったため、それらのセッションは表示されません。"
     },
     "connectionsPage": {
       "action_failed": "操作に失敗しました: {{error}}",
@@ -10462,6 +10468,8 @@
         "open_webhooks": "Webhooks を開く",
         "the_crew_members_page_and_crew_mode_chats_both_a": "クルーメンバーのページと Crew Mode チャット。どちらもまだ開発中のため、これをオンにするまで表示されません。",
         "webhooks": "Webhooks",
+        "remote_instance_sessions": "リモートインスタンスのセッション",
+        "merge_a_connected_remote_instances_live_sessions": "接続済みのリモートインスタンスのライブセッションをセッション一覧に統合し、それぞれにサーバーバッジを表示します。動作しますが、まだ未完成です。",
         "intro": {
           "webhooks_summary": "別のシステム（CI、レビューボット、デプロイパイプライン）が、Webhooks ページで作成したアクセストークン付きでメッセージを送るだけで、あなたの代わりにエージェントを動かせます。",
           "webhooks_where": "オンにすると、設定のこのカードに「Webhooks を開く」リンクが現れ、新しい Webhooks ページはそこから開きます。ページが完成するまでサイドバーには表示されません。オフにしてもページが再び隠れるだけで、作成したトークンは残ります。",

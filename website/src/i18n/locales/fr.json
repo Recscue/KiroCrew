@@ -10389,7 +10389,15 @@
       "folders_load_failed": "Impossible de charger les dossiers",
       "columns_load_failed": "Impossible de charger les colonnes du tableau",
       "folder_update_failed": "Échec de la mise à jour du dossier",
-      "board_update_failed": "Échec de la mise à jour du tableau"
+      "board_update_failed": "Échec de la mise à jour du tableau",
+      "remote_sessions_not_shown_in_board_view_one": "{{count}} session distante n'est pas affichée dans la vue tableau — les colonnes du tableau gèrent uniquement les sessions locales.",
+      "remote_sessions_not_shown_in_board_view_many": "{{count}} sessions distantes ne sont pas affichées dans la vue tableau — les colonnes du tableau gèrent uniquement les sessions locales.",
+      "remote_sessions_not_shown_in_board_view_other": "{{count}} sessions distantes ne sont pas affichées dans la vue tableau — les colonnes du tableau gèrent uniquement les sessions locales.",
+      "sessions_from_instance_unavailable": "Les sessions de {{names}} sont indisponibles pour le moment.",
+      "checking_remote_instances": "Vérification des instances distantes…",
+      "opens_the_instance_dashboard": "Ouvre le tableau de bord de {{name}}, pas cette session",
+      "row_opens_instance_dashboard": "ouvre le tableau de bord de {{name}}",
+      "remote_instances_list_unavailable": "Impossible de lister les instances distantes, leurs sessions ne sont donc pas affichées."
     },
     "connectionsPage": {
       "action_failed": "Échec de l’action : {{error}}",
@@ -10774,6 +10782,8 @@
         "open_webhooks": "Ouvrir Webhooks",
         "the_crew_members_page_and_crew_mode_chats_both_a": "La page Membres de l'équipe et les chats Crew Mode. Les deux sont encore en construction : rien n'est proposé tant que cette option n'est pas activée.",
         "webhooks": "Webhooks",
+        "remote_instance_sessions": "Sessions de l’instance distante",
+        "merge_a_connected_remote_instances_live_sessions": "Fusionne les sessions actives d’une instance distante connectée dans la liste des sessions, chacune marquée d’un badge serveur. Fonctionnel, mais pas terminé.",
         "intro": {
           "webhooks_summary": "Un autre système (CI, bot de revue, pipeline de déploiement) peut lancer ton agent à ta place en envoyant un message avec un jeton d’accès que tu crées sur la page Webhooks.",
           "webhooks_where": "Une fois activé, le lien « Ouvrir Webhooks » apparaît sur cette carte dans les Réglages ; c’est de là que s’ouvre la nouvelle page Webhooks. Elle n’apparaît pas dans la barre latérale tant qu’elle n’est pas terminée. Le désactiver ne fait que masquer la page à nouveau ; les jetons que tu as créés sont conservés.",
