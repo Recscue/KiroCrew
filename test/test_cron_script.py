@@ -12,6 +12,7 @@ import pytest
 
 from kiro_crew import platform_compat as pc
 from kiro_crew.cron_script import (
+    _MAX_COMMAND_OUTPUT,
     Done,
     Report,
     ScriptContext,
@@ -218,6 +219,68 @@ class TestRunCommandSandboxed:
         with patch("subprocess.Popen", return_value=mock_proc):
             result = run_command_sandboxed("boom")
         assert result["output"].endswith("stderr:\nshort failure")
+
+    def test_success_path_redacts_stdout(self):
+        """The value this function RETURNS carries no credential shape.
+
+        ``mode="cc"`` leaves ``~/.ssh`` readable so git/scp crons work, so
+        ``cat ~/.ssh/id_rsa`` exits 0 and its stdout becomes the return value.
+        Today's only consumer redacts again at each of its own sinks, so this
+        does not pin a leak -- it pins the source-layer guarantee that whatever
+        reads this value next gets clean text without having to know to redact.
+        """
+        # Assembled at runtime so no key-shaped literal lands in the repo.
+        label = "OPENSSH PRIVATE" + " KEY"
+        key_body = "b" * 64
+        pem = f"-----BEGIN {label}-----\n{key_body}\n-----END {label}-----"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate.return_value = (pem, "")
+        with patch("subprocess.Popen", return_value=mock_proc):
+            result = run_command_sandboxed("read-the-key")
+        assert result["status"] == "ok"
+        assert result["exit_code"] == 0
+        assert key_body not in result["output"]
+        assert label not in result["output"]
+        # Positive proof the payload flowed through redaction rather than the
+        # result simply coming back empty.
+        assert "credential]" in result["output"]
+
+    def test_success_path_leaves_ordinary_stdout_unchanged(self):
+        """Redaction must not rewrite output that carries no credential."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate.return_value = ("disk usage: 41% of /home\n", "")
+        with patch("subprocess.Popen", return_value=mock_proc):
+            result = run_command_sandboxed("df -h")
+        assert result["status"] == "ok"
+        assert result["output"] == "disk usage: 41% of /home\n"
+
+    def test_redaction_precedes_the_64kb_slice(self):
+        """A delimiter-terminated credential must be masked before truncation.
+
+        The URL-userinfo branch of ``_CREDENTIAL_PATTERNS`` ends at the trailing
+        ``@`` (``://[^\\s:/@]*:[^\\s/]+@``), so the credential's right edge is a
+        DELIMITER rather than a prefix. Size the text so the 64KB cut falls
+        between the password and that ``@``: the truncated string is
+        ``https://u:SECRET`` with no ``@``, which the pattern cannot match, so a
+        reader that redacts AFTER truncating ships the password verbatim. The cut
+        lives inside ``run_command_sandboxed``, so redacting here is the only
+        place this is reachable from.
+        """
+        secret = "s3cr3t-p4ssw0rd"
+        prefix = "https://u:"
+        # The `@` is the FIRST character the slice discards.
+        padding = "p" * (_MAX_COMMAND_OUTPUT - len(prefix) - len(secret))
+        stdout_text = padding + prefix + secret + "@example.invalid/x"
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate.return_value = (stdout_text, "")
+        with patch("subprocess.Popen", return_value=mock_proc):
+            result = run_command_sandboxed("dump-config")
+        assert result["status"] == "ok"
+        assert secret not in result["output"]
+        assert "credential]" in result["output"]
 
 
 class TestCronSandboxUnavailableIsStructuredNotRaised:

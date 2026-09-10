@@ -2092,11 +2092,24 @@ def run_command_sandboxed(
     # .netrc, .git-credentials, .npmrc, .pypirc, .kirocrew/.env) and scrubs the
     # agent-denied env keys, while deliberately leaving ~/.ssh reachable so a
     # legitimate command cron can still do git/scp/rsync over SSH. "strict" would
-    # additionally hide ~/.ssh but break those workflows; the residual .ssh
-    # exposure is covered by the storage-time deny-list (mcp_cron._vet_shell_command,
-    # which blocks any .ssh reference) — the primary control. This sandbox is
-    # defense-in-depth and is bypassed when the OS backend falls back to "none"
-    # (e.g. macOS >= 26 — see _clean_cron_env).
+    # additionally hide ~/.ssh but break those workflows, and SSH_AUTH_SOCK is
+    # scrubbed from the cron env, so there is no agent alternative: a git or scp
+    # cron has to read the key file itself.
+    #
+    # So ~/.ssh stays READABLE here, and that is an ACCEPTED RESIDUAL, not a
+    # covered case. The storage-time vet (mcp_cron._vet_shell_command) refuses a
+    # command that NAMES a credential path (_CRON_CRED_PATH_RE, plus its
+    # quote/escape/variable/glob variants). That is a spelling gate, not a fence:
+    # a reader that names no credential path (`grep -r 'PRIVATE KEY' ~`,
+    # `tar czf - ~ | base64`, `find ~ -name id_rsa`) still reaches the key, and
+    # widening the gate by guessing more spellings refuses legitimate work
+    # (`ssh -i /opt/deploy/id_rsa`) while one metacharacter walks past it. The
+    # stdout redaction below is the control that does not depend on spelling: it
+    # masks a dump whose SHAPE it recognises. Real closure is a per-job opt-in
+    # that hides ~/.ssh by default and exposes it only for a job that declares it
+    # needs SSH — future work. This sandbox is defense-in-depth and is bypassed
+    # when the OS backend falls back to "none" (e.g. macOS >= 26 — see
+    # _clean_cron_env).
     #
     # wrap_argv is INSIDE the try: on a host with no OS sandbox backend (every
     # Windows host) it fail-closes by raising, and outside the try that escaped
@@ -2206,6 +2219,42 @@ def run_command_sandboxed(
                 "output": "Cancelled by user",
                 "exit_code": proc.returncode,
             }
+        # Redact the captured stdout before returning it, so this function's return
+        # value never carries a credential shape. This is the only return that
+        # carries captured stdout -- the cancelled, timeout, sandbox-unavailable
+        # and generic-exception returns all hand back synthetic strings. The
+        # command is model-supplied and runs under mode="cc", which leaves ~/.ssh
+        # readable, so `cat ~/.ssh/id_rsa` exits 0 and its stdout becomes that
+        # value.
+        #
+        # Under the 64KB cap this adds nothing today: the one consumer
+        # (`slack/gateway.py`'s cron command path) already redacts at both of its
+        # own sinks -- `job.set_run_result(redact(output))` for delivery and
+        # history, and `_alert_cron_failure`, whose first act is to redact the
+        # detail it is handed. Keep it anyway. The guarantee then belongs to the
+        # value rather than to each reader's habit, so the next consumer added is
+        # clean without having to know to redact. Do not "deduplicate" it away
+        # against the sinks -- the sinks are what became redundant, not this. A
+        # second pass is a no-op, because `redact` substitutes
+        # `[REDACTED: credential]`, which matches no credential shape.
+        #
+        # The POSITION is the part no sink can reproduce. Most credential shapes
+        # are bounded by a prefix, which a head-keeping slice preserves; the
+        # URL-userinfo branch of `_CREDENTIAL_PATTERNS` is `://[^\s:/@]*:[^\s/]+@`
+        # and its match instead ENDS at the trailing `@`. Truncation keeps the head
+        # (`output[:_MAX_COMMAND_OUTPUT]`), so a cut landing between the password
+        # and that `@` leaves `https://u:SECRET` -- text that branch cannot match.
+        # A 40-plus character base64 run MAY still be caught by the bare-secret
+        # pass, but only conditionally: `[A-Za-z0-9+/]{40,}` finds the candidate
+        # and an entropy-and-character-class gate decides, so an all-lowercase or
+        # low-entropy passphrase of that length is NOT caught. A shorter password,
+        # or one carrying a `-` or `_`, cannot be caught by that pass at all.
+        # Either way, anything redacting AFTER the slice ships it. The
+        # slice happens HERE, upstream of every sink, so this is the only place
+        # that case is reachable from. Pinned by
+        # `test_redaction_precedes_the_64kb_slice`; the stderr tail below is
+        # redacted before ITS truncation for the mirror-image reason.
+        output = redact(output)
         if len(output) > _MAX_COMMAND_OUTPUT:
             output = output[:_MAX_COMMAND_OUTPUT] + "\n\n[truncated — output exceeded 64KB]"
         if proc.returncode != 0:
