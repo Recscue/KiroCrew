@@ -40,15 +40,28 @@ EXPECTED_LAUNCH_REGISTRY = {
     "paypal",
     "sentry",
     "supabase",
+    # Industry-baseline batch 2, same admission bar and same hold-back: seven
+    # both directories list, five one directory lists.
+    "amplitude",
+    "cloudflare",
+    "huggingface",
+    "miro",
+    "mixpanel",
+    "neon",
+    "netlify",
+    "postman",
+    "prisma",
+    "webflow",
+    "zapier",
 }
 # Tier 3: the vendor admits OAuth clients from an allowlist or waitlist, so no
 # amount of local verification can pass the gate until Kiro is admitted. They
 # are excluded from get_all_providers() as well as from the grid.
-VENDOR_APPROVAL_PENDING = {"canva", "dropbox", "figma"}
+VENDOR_APPROVAL_PENDING = {"canva", "dropbox", "figma", "square"}
 # Registered so the OAuth banner allowlist stays registry-derived, but held back
 # from the Connect grid: GitHub until the Kiro app is registered, Superhuman until
 # a logged-in check records its revoke surface and walks the consent flow, and
-# the batch-1 entries until each has a manual launch-gate check.
+# the industry-baseline entries until each has a manual launch-gate check.
 LAUNCH_GATED = {
     "github",
     "superhuman",
@@ -57,6 +70,17 @@ LAUNCH_GATED = {
     "paypal",
     "sentry",
     "supabase",
+    "amplitude",
+    "cloudflare",
+    "huggingface",
+    "miro",
+    "mixpanel",
+    "neon",
+    "netlify",
+    "postman",
+    "prisma",
+    "webflow",
+    "zapier",
 } | VENDOR_APPROVAL_PENDING
 
 
