@@ -28,10 +28,9 @@ import CrewWakeSection from '../components/CrewWakeSection'
 import CrewWebhookSection from '../components/CrewWebhookSection'
 import CrewEditorRail from '../components/crew/CrewEditorRail'
 import CrewOverviewPane from '../components/crew/CrewOverviewPane'
-// Lazy: the panel is behind the `agent_template_pane` flag, so its code
-// stays out of the main chunk until a crew editor actually renders it.
+// Lazy: the template panel is heavy, so its code stays out of the main chunk
+// until a crew editor actually renders it.
 const AgentTemplateDetail = lazy(() => import('../components/crew/AgentTemplateDetail'))
-import { useAgentTemplatePaneEnabled } from '../hooks/useAgentTemplatePane'
 import { useCrewEditorSections, type CrewPaneKey } from '../components/crew/crewEditorSections'
 import { wakesCrew, crewWakeQueryKey, crewWebhooksQueryKey, webhookBoundToCrew, webhookCanCallIn } from '../components/crew/wakesCrew'
 import type { CronJob } from '../types'
@@ -834,7 +833,6 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
   // picker so the list is fetched once. INHERIT_MODEL leads so "no pin" is the
   // obvious choice rather than an absent option.
   const availableModels = useAvailableModels()
-  const templatePaneEnabled = useAgentTemplatePaneEnabled()
   const modelOptions = [
     INHERIT_MODEL,
     ...(availableModels || []).map((m: { name: string }) => m.name).filter((n: string) => n && n !== INHERIT_MODEL),
@@ -1786,7 +1784,7 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
   // changes" footer would advertise a second, contradictory save model over the
   // pane's own "saved as you go" copy. Hide the footer there — the dialog's
   // built-in ✕ still closes it, and the pane surfaces its own errors.
-  const templatePaneActive = !creating && templatePaneEnabled && pane === 'template'
+  const templatePaneActive = !creating && pane === 'template'
 
   return (
     <>
@@ -2163,55 +2161,38 @@ export default function KiroCrewAgentsPage({ embedded }: { embedded?: boolean } 
                   )}
 
                   {pane === 'template' && (
-                    <>
-                      {templatePaneEnabled ? (
-                        /* The panel owns the selector: the template picker is
-                           the header bar of the container holding the
-                           definition it names (v5 design, usability-reviewed).
-                           The crew's private copy is filtered from the shared
-                           catalog; the panel re-adds the current binding when
-                           needed. */
-                        <Suspense fallback={null}>
-                          <>
-                            {/* No askAgent hand-off: it navigates to /chat,
-                                unmounting this sheet and destroying its
-                                unsaved pane edits (dirtyPanes). Errors inside
-                                the editor render in place, never as a
-                                hand-off. */}
-                            <ErrorNotice
-                              message={templateSwitchError || null}
-                              variant="inline"
-                              testId="crew-template-switch-error"
-                            />
-                            <AgentTemplateDetail
-                            template={kiroAgent}
-                            models={(availableModels || []).map((m: { name: string }) => m.name).filter(Boolean)}
-                            crew={editing || undefined}
-                            onForked={setKiroAgent}
-                            options={kiroAgentOptions}
-                            onSelect={persistTemplateSwitch}
-                            onRebound={setKiroAgent}
-                            provenance={templateProvenance}
-                            fieldLabel={provider.labels.agentTemplateField}
-                            onSaveChain={onPaneSaveChain}
-                          />
-                          </>
-                        </Suspense>
-                      ) : (
-                        <TemplateField
-                          label={provider.labels.agentTemplateField}
-                          options={
-                            kiroAgent && !kiroAgentOptions.includes(kiroAgent)
-                              ? [kiroAgent, ...kiroAgentOptions]
-                              : kiroAgentOptions
-                          }
-                          value={kiroAgent}
-                          onChange={setKiroAgent}
-                          subject="agent"
-                          provenance={templateProvenance}
+                    /* The panel owns the selector: the template picker is
+                       the header bar of the container holding the
+                       definition it names (v5 design, usability-reviewed).
+                       The crew's private copy is filtered from the shared
+                       catalog; the panel re-adds the current binding when
+                       needed. */
+                    <Suspense fallback={null}>
+                      <>
+                        {/* No askAgent hand-off: it navigates to /chat,
+                            unmounting this sheet and destroying its
+                            unsaved pane edits (dirtyPanes). Errors inside
+                            the editor render in place, never as a
+                            hand-off. */}
+                        <ErrorNotice
+                          message={templateSwitchError || null}
+                          variant="inline"
+                          testId="crew-template-switch-error"
                         />
-                      )}
-                    </>
+                        <AgentTemplateDetail
+                          template={kiroAgent}
+                          models={(availableModels || []).map((m: { name: string }) => m.name).filter(Boolean)}
+                          crew={editing || undefined}
+                          onForked={setKiroAgent}
+                          options={kiroAgentOptions}
+                          onSelect={persistTemplateSwitch}
+                          onRebound={setKiroAgent}
+                          provenance={templateProvenance}
+                          fieldLabel={provider.labels.agentTemplateField}
+                          onSaveChain={onPaneSaveChain}
+                        />
+                      </>
+                    </Suspense>
                   )}
 
                   {pane === 'model' && (

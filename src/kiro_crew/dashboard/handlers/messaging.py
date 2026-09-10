@@ -923,18 +923,6 @@ async def api_spawn_stop_all(request: web.Request) -> web.Response:
     )
 
 
-async def api_spawn_clear(request: web.Request) -> web.Response:
-    """DELETE /api/spawn — clear all completed subagents."""
-    state: DashboardState = request.app["state"]
-    if not state.subagents:
-        return web.json_response({"ok": True})
-    done_ids = [a.id for a in state.subagents.all_agents if a.done]
-    for aid in done_ids:
-        state.subagents._agents.pop(aid, None)
-        state.subagents._tasks.pop(aid, None)
-    return web.json_response({"ok": True, "cleared": len(done_ids)})
-
-
 # ── Sessions / Notifications ──
 
 
