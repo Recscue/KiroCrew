@@ -203,6 +203,31 @@ def codex_adapter_install_command() -> str:
     return f"npm i -g {CODEX_ACP_NPM_PKG}"
 
 
+def opencode_resolves() -> bool:
+    """Whether the OpenCode binary resolves on this host right now.
+
+    One seam, not the adapters' two: this harness serves ACP itself, so the thing
+    that resolves IS the thing that runs, and there is no second executable whose
+    absence would be a different verdict.
+    """
+    from kiro_crew.acp.client import _resolve_opencode_bin
+
+    binary, _searched_path = _resolve_opencode_bin()
+    return bool(binary)
+
+
+def opencode_install_command() -> str:
+    """The harness's own installer, read from the spawn path's constant.
+
+    Imported rather than restated for the same reason as the two above: the command
+    an operator is told to run and the binary the ladder searches for must not be
+    able to drift apart.
+    """
+    from kiro_crew.acp.client import OPENCODE_INSTALL_COMMAND
+
+    return OPENCODE_INSTALL_COMMAND
+
+
 def claude_adapter_install_command() -> str:
     """``npm i -g <adapter package>`` -- the adapter's remedy, from the repo.
 

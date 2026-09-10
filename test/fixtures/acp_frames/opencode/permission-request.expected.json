@@ -1,0 +1,60 @@
+[
+  {
+    "action": "permission",
+    "events": [
+      {
+        "kind": "permission_request",
+        "options": [
+          {
+            "id": "once",
+            "label": "Allow once"
+          },
+          {
+            "id": "always",
+            "label": "Allow always"
+          },
+          {
+            "id": "reject",
+            "label": "Reject"
+          }
+        ],
+        "request_id": 4101,
+        "title": "bash",
+        "tool_call_id": "call_ReplayCorpusOpencode1",
+        "tool_kind": "execute"
+      }
+    ],
+    "frame": "session/request_permission",
+    "recorded_options": {
+      "always": "always",
+      "once": "once",
+      "reject": "reject"
+    }
+  },
+  {
+    "action": "update",
+    "events": [
+      {
+        "kind": "tool_result",
+        "tool_call_id": "call_ReplayCorpusOpencode1",
+        "tool_final": true,
+        "tool_output": "acp-replay-corpus"
+      },
+      {
+        "is_shell": true,
+        "kind": "tool_call_update",
+        "title": "bash",
+        "tool_call_id": "call_ReplayCorpusOpencode1",
+        "tool_kind": "execute",
+        "wire_title": "bash"
+      }
+    ],
+    "frame": "session/update",
+    "session_update": "tool_call_update"
+  },
+  {
+    "frame": "response",
+    "id": 5,
+    "stop_reason": "end_turn"
+  }
+]

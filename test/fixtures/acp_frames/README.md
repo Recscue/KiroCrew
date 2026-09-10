@@ -111,10 +111,12 @@ than by prose; see `docs/system-specs/modules/agent-host-contract.md`.
 
 ## Provenance of what is committed today
 
-Every fixture in this corpus is currently `synthesized`. Stated plainly because
-it bounds what the corpus proves: it locks the dispatch layer's behaviour against
-refactoring, which is what it was built for, and it does **not** prove that any
-backend really emits these shapes.
+Every fixture here is `synthesized` except two of the three under `opencode/`,
+which are captures. Stated plainly because it bounds what the corpus proves: a
+synthesized fixture locks the dispatch layer's behaviour against refactoring,
+which is what it was built for, and it does **not** prove that the backend really
+emits those shapes. Only the live files carry that second proof, and only for the
+six classes they reach.
 
 | Directory | Backend id | Provenance | Why |
 |---|---|---|---|
@@ -122,6 +124,7 @@ backend really emits these shapes.
 | `kas/` | `kas` | synthesized | Reached through the kiro-cli relay, so same as above. The `_meta.kiro` discriminants follow `src/kiro_crew/acp/kas_wire.py`. |
 | `claude/` | `claude` | synthesized | `claude-agent-acp` was not installed on the recording host. |
 | `codex/` | `codex` | synthesized | `codex-acp` was not installed on the recording host. |
+| `opencode/` | `opencode` | **mixed** | Two live files and one synthesized, all off `opencode acp` 1.18.30 driving a local Ollama model. `session-live.jsonl`: the initialize response, the `session/new` response, an `agent_message_chunk` turn, a `usage_update` and the `stopReason` response, verbatim and in order. `tool-call-live.jsonl`: a real `tool_call` and two real `tool_call_update` frames, sliced out of a turn whose 430 message chunks are omitted for length, with the home directory redacted to `~`. `permission-request.jsonl`: `session/request_permission` -- the ONE class never captured -- plus the completed `tool_call_update` an approval would produce. Why it is synthesized: the recording host has no GPU, and the small local model it could serve in reasonable time shaped the tool arguments wrongly, so the harness rejected the call against its own schema BEFORE any permission check. The harness side is not in question: a wire proxy in front of the model recorded OpenCode advertising all ten of its tools, `bash` among them, on every request. |
 
 Replacing any row with a live capture is a strict improvement and needs no
 change to the test. Record it, set `recorded` to `live`, fill in the real
