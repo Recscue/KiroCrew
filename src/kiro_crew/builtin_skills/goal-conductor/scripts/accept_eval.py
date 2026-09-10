@@ -7,6 +7,11 @@ exit code and a JSON document, not a model's impression of a transcript.
 
 Usage:
     python3 accept_eval.py < items.json
+    python3 accept_eval.py --help      # this block, on stderr, exit 2
+
+The input arrives on STDIN. Invoked with nothing piped in (a terminal) or with
+``-h``/``--help``, this script prints this block and exits 2 instead of
+blocking on a read that would look like a hang.
 
 stdin (JSON):
     {"items": [
@@ -67,6 +72,10 @@ Other properties:
 - Evidence is tail-capped so a chatty check cannot flood the conductor's turn.
 - A ``refused`` verdict is one the conductor must surface to the user, never
   retry around.
+- ``pr_checks`` that comes back PENDING on a DRAFT pull request is ``refused``,
+  not retried: where a repo has an aggregate check gated on the draft flag, that
+  wait is an infinite loop rather than a wait. A draft whose checks resolve is
+  judged on them like any other PR.
 
 Stdlib-only, Python 3.8+.
 """
@@ -78,8 +87,10 @@ from pathlib import Path
 
 #: Binaries this script itself invokes, from argv it builds. NOT a spec-facing
 #: allowlist - nothing in a spec can name a command at all. This exists so a
-#: handler that ever passes spec input into `_run` fails closed instead of
+#: handler that ever passes spec input into `_exec` fails closed instead of
 #: executing it, which is the regression the `cmd` kind's removal prevents.
+#: Both invocations here are `gh` (`pr checks` and the `pr view` draft probe),
+#: so a second entry would widen the surface for nothing.
 _SELF_BUILT_COMMANDS = {"gh"}
 
 TIMEOUT_SECS = 300
@@ -94,20 +105,27 @@ def _tail(text: str) -> str:
     return text[-EVIDENCE_TAIL_CHARS:] if len(text) > EVIDENCE_TAIL_CHARS else text
 
 
-def _run(argv, cwd=None):
-    """Run one SCRIPT-BUILT check without a shell; return (verdict, evidence).
+def _exec(argv, cwd=None):
+    """Run one SCRIPT-BUILT argv without a shell; return ``(problem, proc)``.
+
+    Exactly one half is not ``None``. ``problem`` is a ready
+    ``(verdict, evidence)`` pair for the cases where no process ran at all.
 
     Every caller must pass an argv it constructed itself. The guard below is an
     internal invariant, not a spec gate: reaching it with something outside
     ``_SELF_BUILT_COMMANDS`` means a handler leaked spec input into an exec path,
-    so it refuses rather than runs.
+    so it refuses rather than runs. It lives HERE, in the one exec seam, which
+    is why adding a second invocation did not add a second way past it.
     """
     raw = str(argv[0])
     if raw not in _SELF_BUILT_COMMANDS:
         return (
-            "refused",
-            f"evaluator bug: {raw!r} is not a command this script builds; "
-            "no spec field may name a command",
+            (
+                "refused",
+                f"evaluator bug: {raw!r} is not a command this script builds; "
+                "no spec field may name a command",
+            ),
+            None,
         )
     try:
         proc = subprocess.run(  # noqa: S603 - argv array, no shell, script-built
@@ -125,17 +143,47 @@ def _run(argv, cwd=None):
             timeout=TIMEOUT_SECS,
         )
     except subprocess.TimeoutExpired:
-        return ("error", f"timed out after {TIMEOUT_SECS}s")
+        return (("error", f"timed out after {TIMEOUT_SECS}s"), None)
     except FileNotFoundError:
-        return ("error", f"{raw!r} not found on PATH")
+        return (("error", f"{raw!r} not found on PATH"), None)
     except OSError as exc:
-        return ("error", f"could not run: {exc}")
+        return (("error", f"could not run: {exc}"), None)
+    return (None, proc)
+
+
+def _run(argv, cwd=None):
+    """Run one SCRIPT-BUILT check and map its exit into a verdict."""
+    raw = str(argv[0])
+    problem, proc = _exec(argv, cwd)
+    if proc is None:
+        return problem or ("error", "could not run")
     output = _tail(proc.stdout + "\n" + proc.stderr)
     if proc.returncode == 0:
         return ("pass", output or "exit 0")
     if raw == "gh" and proc.returncode == _GH_PENDING_EXIT:
         return ("pending", output or "checks still running")
     return ("fail", f"exit {proc.returncode}: {output}")
+
+
+def _pr_is_draft(pr, repo=None):
+    """Is this pull request still a draft? ``True`` only on an unambiguous yes.
+
+    Asked ONLY to explain a check run that came back pending - see the
+    ``pr_checks`` handler for why the order matters.
+
+    The probe is deliberately one-sided. Anything other than a clean ``true`` -
+    gh absent, no such PR, an auth failure, a forge without the field - returns
+    ``False``, and the pending verdict then stands exactly as it did before, so
+    a probe that cannot answer never invents a refusal.
+    """
+    argv = ["gh", "pr", "view", str(pr)]
+    if repo:
+        argv += ["--repo", str(repo)]
+    argv += ["--json", "isDraft", "-q", ".isDraft"]
+    problem, proc = _exec(argv)
+    if problem is not None or proc is None or proc.returncode != 0:
+        return False
+    return proc.stdout.strip().lower() == "true"
 
 
 def _evaluate(item):
@@ -147,11 +195,30 @@ def _evaluate(item):
         # checks True`; reject it with the same message as any other non-int.
         if not isinstance(pr, int) or isinstance(pr, bool):
             return ("error", "pr_checks spec needs an integer pr")
-        argv = ["gh", "pr", "checks", str(pr)]
         repo = accept.get("repo")
+        argv = ["gh", "pr", "checks", str(pr)]
         if repo:
             argv += ["--repo", str(repo)]
-        return _run(argv)
+        verdict, evidence = _run(argv)
+        # The draft probe runs HERE, behind a pending verdict, and nowhere else.
+        #
+        # A draft PR is not unconditionally unsatisfiable: where a repo has no
+        # aggregate check gated on the draft flag, a draft's checks resolve and
+        # `gh pr checks` exits 0 - a `pass` this script must keep returning,
+        # since this skill ships to arbitrary repos. What IS unsatisfiable is
+        # the combination: pending, and pending BECAUSE the PR is a draft, which
+        # no amount of further polling changes. Asking only about a pending run
+        # also costs nothing on the pass and fail paths, which is every cycle
+        # that was never going to loop.
+        if verdict == "pending" and _pr_is_draft(pr, repo):
+            return (
+                "refused",
+                f"PR #{pr} is a draft and its checks are still pending; a "
+                "readiness check gated on the draft flag will not resolve on "
+                "its own -- mark it ready for review or change the acceptance "
+                "kind",
+            )
+        return (verdict, evidence)
     if kind == "file":
         path = accept.get("path")
         if not isinstance(path, str) or not path:
@@ -182,7 +249,39 @@ def _evaluate(item):
     return ("error", f"unknown accept kind {kind!r}")
 
 
-def main() -> int:
+def _usage_text() -> str:
+    """The Usage..exit-code part of the module docstring, verbatim.
+
+    Sliced out of ``__doc__`` instead of duplicated, so help a caller reads can
+    never drift from the contract documented above it. ``python -OO`` strips
+    docstrings, hence the one-line fallback.
+    """
+    doc = __doc__ or ""
+    start = doc.find("Usage:")
+    end = doc.find("THE SECURITY INVARIANT")
+    if start < 0 or end <= start:
+        return "Usage: python3 accept_eval.py < items.json"
+    return doc[start:end].rstrip()
+
+
+def _stdin_is_a_tty() -> bool:
+    """Is stdin a terminal? A closed or detached stdin counts as not one."""
+    try:
+        return bool(sys.stdin is not None and sys.stdin.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def main(argv=None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "-h" in args or "--help" in args or _stdin_is_a_tty():
+        # Run with nothing piped in, the json.load below blocks on a read that
+        # never completes: from a caller's side that is a tool timeout, an
+        # approval spent, and no output - not "you forgot the input". Say what
+        # the input is and stop. Exit 2 is the code malformed input already
+        # uses, so nothing that pipes real input sees a new outcome.
+        print(_usage_text(), file=sys.stderr)
+        return 2
     try:
         payload = json.load(sys.stdin)
         items = payload["items"]
