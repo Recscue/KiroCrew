@@ -175,6 +175,7 @@ from kiro_crew.executors import (
     run_in_embed_pool,
     subprocess_executor,
 )
+from kiro_crew.feature_videos_cache import start_background_feature_video_download
 from kiro_crew.frontend import build_frontend_async
 from kiro_crew.gateway_shutdown_budget import GRACEFUL_SHUTDOWN_SECS
 from kiro_crew.heartbeat import (
@@ -9112,6 +9113,11 @@ class GatewayOrchestrator:
                 "memory falls back to keyword search until ready"
             )
         self._model_download_task = start_background_model_download()
+        # Hosted feature-video clips, same posture as the model above: a
+        # background transfer so boot never waits on it, with every gate (the kill
+        # switch, the ceiling, the manifest) checked inside the task rather than
+        # here, because each of them needs blocking work.
+        self._feature_video_task = start_background_feature_video_download()
 
     async def _auto_migrate_memory(self) -> None:
         """Migrate legacy markdown memory into the vector store, then backfill.
