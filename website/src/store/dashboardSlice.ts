@@ -399,6 +399,11 @@ const dashboardSlice = createSlice({
       safeSet('mc-unread-slots', JSON.stringify(state.unreadSlots))
     },
     markSlotRead(state, action: PayloadAction<string>) {
+      // No-op guard: relayed slot_read frames fan in from every window (own
+      // echo included), and rewriting persistence for an absent key would
+      // multiply localStorage writes and let a no-op receiver clobber keys a
+      // sibling window just persisted from ITS (divergent) unread set.
+      if (!state.unreadSlots.includes(action.payload)) return
       state.unreadSlots = state.unreadSlots.filter(k => k !== action.payload)
       safeSet('mc-unread-slots', JSON.stringify(state.unreadSlots))
     },

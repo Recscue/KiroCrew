@@ -4,12 +4,13 @@ import { isArtifactEditing } from '../utils/artifactEditGuard'
 import { isReconcileNote } from '../lib/noteContract'
 import { useAppDispatch, useAppSelector } from '../store'
 import { store } from '../store'
-import { sseStatus, sseYolo, sseConnected, sseDisconnected, sseSlots, sseTodoUpdate, sseMcpReportUpdate, setChannelTrusted, sseSlotTitle, triggerRefresh, fetchSlots, markSlotUnread, setUpdateProgress, sseSubagentStatus, sseSubagentText, touchSlotActivity, patchSlotSourceLinks, type SubagentDetail } from '../store/dashboardSlice'
+import { sseStatus, sseYolo, sseConnected, sseDisconnected, sseSlots, sseTodoUpdate, sseMcpReportUpdate, setChannelTrusted, sseSlotTitle, triggerRefresh, fetchSlots, markSlotUnread, markSlotRead, setUpdateProgress, sseSubagentStatus, sseSubagentText, touchSlotActivity, patchSlotSourceLinks, type SubagentDetail } from '../store/dashboardSlice'
 import { addNotification, ackNotificationByTs, unackNotificationByTs, removeNotificationByTs, clearAllNotifications, fetchNotifications, markBootNotificationsFetched } from '../store/notificationsSlice'
 import { dispatchMcNotification, TURN_DONE_KIND, APPROVAL_KIND, shouldChimeOnTurnDone } from './notificationEvent'
 import { shouldNotifyOnChatComplete } from './chatCompleteNotify'
 import { emitThemeSound } from './themeSound'
 import { streamingFlushHoldMs } from '../lib/streamHold'
+import { bindSlotReadSender, emitSlotRead, flushSlotRead } from '../lib/slotReadRelay'
 import { VoicePcmPlayer, voiceBoundary, createVoiceRequestId } from '../lib/voicePlayback'
 import { reportVoiceFailure } from '../lib/voiceFailure'
 import {
@@ -266,6 +267,11 @@ export function useWebSocket() {
   const reconnectRef = useRef(1000)
   const wasConnectedRef = useRef(false)
   const reconnectingRef = useRef(false)  // suppress markSlotUnread during reconnect catch-up
+  // Slot that received a message while it was this window's active slot but the
+  // document was hidden. A hidden window isn't reading, so the arrival branches
+  // relay nothing then — instead they park the slot here, and the visibility
+  // handler relays the read when the user actually returns to it.
+  const hiddenActiveArrivalRef = useRef<string | null>(null)
   const lastVersionRef = useRef<string | null>(null)
   // Served-bundle hash from the last status frame. A same-version rebuild (a
   // git checkout's in-app update) moves this while `version` stays put, so it
@@ -1514,6 +1520,17 @@ export function useWebSocket() {
               )
             }
             if (data.slot && data.slot !== store.getState().chat.activeSlot && !reconnectingRef.current) dispatch(markSlotUnread(data.slot))
+            // The message landed in THIS window's active slot while the tab is
+            // visible: the user is watching it arrive, so the fresh bubble the
+            // other windows just lit for it is already read — relay that.
+            // A hidden window isn't reading: park the slot instead, and the
+            // visibility handler relays when the user returns to it. Reconnect
+            // catch-up replays aren't reads either (mirrors the markSlotUnread
+            // suppression above).
+            else if (data.slot && !reconnectingRef.current) {
+              if (!document.hidden) emitSlotRead(data.slot)
+              else hiddenActiveArrivalRef.current = data.slot
+            }
             // Theme audio: an agent reply arriving is the `message-received`
             // trigger (no-op unless an L2 theme with that manifest sound is
             // active + unmuted). User/tool messages don't chime.
@@ -1736,6 +1753,15 @@ export function useWebSocket() {
                 ...(typeof raw.ts === 'number' ? { ts: raw.ts } : {}),
               }))
             }
+            break
+          }
+          case 'slot_read': {
+            // Another window read this slot (relayed via the gateway): retire
+            // the bubble here too. Plain markSlotRead — never emitSlotRead —
+            // so a relayed read can't echo back out and loop. Idempotent, so
+            // receiving our own broadcast back is harmless.
+            const r = data as { slot?: string }
+            if (typeof r.slot === 'string' && r.slot) dispatch(markSlotRead(r.slot))
             break
           }
           case 'slot_folder_suggestion': {
@@ -2006,6 +2032,12 @@ export function useWebSocket() {
               // #2: warm the per-slot cache so switching to this background
               // session renders the finished answer instantly (no on-switch fetch).
               dispatch(warmSlotCache(data.slot))
+            }
+            // Turn finished in this window's active slot: same read-relay (or
+            // hidden-arrival parking) as the chat_message arrival branch above.
+            else if (data.slot && !reconnectingRef.current) {
+              if (!document.hidden) emitSlotRead(data.slot)
+              else hiddenActiveArrivalRef.current = data.slot
             }
             if (data.slot) {
               dispatch(setSlotStatusDetail({ slot: data.slot, kind: 'idle', text: 'Ready', ts: Date.now() }))
@@ -2340,10 +2372,21 @@ export function useWebSocket() {
       ws.send(JSON.stringify({ type: 'slot_focused', slot }))
     }
     sendSlotFocusedImpl = sendFocus
+    // Read-relay sender rides the same socket with the same best-effort
+    // contract; slotReadRelay owns the per-slot throttle.
+    bindSlotReadSender((slot: string) => {
+      const ws = wsRef.current
+      if (!ws || ws.readyState !== WebSocket.OPEN) return
+      ws.send(JSON.stringify({ type: 'slot_read', slot }))
+    })
     let lastFocusSent: string | null = store.getState().chat.activeSlot
     const unsubFocus = store.subscribe(() => {
       const active = store.getState().chat.activeSlot
       if (active === lastFocusSent) return  // store.subscribe fires on EVERY action
+      // The outgoing slot stops being visible-active NOW: flush its pending
+      // trailing read-relay so the timer can't fire after a newer message
+      // re-badges the slot and wipe a bubble nobody read.
+      if (lastFocusSent) flushSlotRead(lastFocusSent)
       lastFocusSent = active
       stopVoice()
       voiceMutedRef.current = false
@@ -2354,7 +2397,21 @@ export function useWebSocket() {
       // Hidden → blur (cancels a pending prefetch server-side); visible →
       // re-announce the active slot even if unchanged, since the server may
       // have expired the previous prefetch while the tab was away.
+      if (document.hidden) {
+        // Going hidden: no pending trailing read-relay may outlive visibility
+        // (a newer message could re-badge the slot before the timer fired).
+        flushSlotRead()
+      }
       sendFocus(document.hidden ? null : store.getState().chat.activeSlot)
+      if (!document.hidden) {
+        // Returning to a slot that received messages while this window was
+        // hidden IS the read of those messages — relay it now. Guarded to the
+        // slot that is still active (a stale parked key relays nothing) and
+        // dropped during reconnect catch-up, mirroring the arrival branches.
+        const arrived = hiddenActiveArrivalRef.current
+        hiddenActiveArrivalRef.current = null
+        if (arrived && arrived === store.getState().chat.activeSlot && !reconnectingRef.current) emitSlotRead(arrived)
+      }
     }
     document.addEventListener('visibilitychange', onVisibility)
     return () => {

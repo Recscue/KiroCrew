@@ -4,6 +4,7 @@ import { api, ApiError } from '../api/client'
 import { store, useAppDispatch } from '../store'
 import { deleteSlot, switchSlot } from '../store/chatSlice'
 import { updateSlotPin, updateSlot, markSlotRead, markSlotUnread } from '../store/dashboardSlice'
+import { emitSlotRead } from '../lib/slotReadRelay'
 import { copySessionLink } from '../utils/shareUrl'
 import { useMoveSlotToFolder } from './useMoveSlotToFolder'
 import { loadChatConfig } from '../pages/chat/ChatSettings'
@@ -291,6 +292,10 @@ export function useSessionActions(mode?: string): SessionActions {
   const toggleRead = useCallback((slotKey: string) => {
     const isUnread = store.getState().dashboard.unreadSlots.includes(slotKey)
     dispatch(isUnread ? markSlotRead(slotKey) : markSlotUnread(slotKey))
+    // Read direction relays to other windows (a deliberate "I've seen this").
+    // The unread direction stays window-local: "remind me later" is a note to
+    // self, not a badge to push onto every screen.
+    if (isUnread) emitSlotRead(slotKey)
   }, [dispatch])
 
   const togglePin = useCallback((slotKey: string) => {

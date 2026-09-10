@@ -61,6 +61,7 @@ import { usePersistedString } from '../../hooks/usePersistedString'
 import { findReport, type ErrorReport } from '../../utils/errorReport'
 import { useAppDispatch, useAppSelector } from '../../store'
 import { markSlotRead } from '../../store/dashboardSlice'
+import { emitSlotRead } from '../../lib/slotReadRelay'
 import CrewAvatar from '../../components/CrewAvatar'
 import CrewStateAvatar from '../../components/CrewStateAvatar'
 import ChatPane from '../../components/ChatPane'
@@ -996,7 +997,15 @@ export default function MembersPage() {
     (s) => !!activeSlot && s.dashboard.unreadSlots.includes(activeSlot),
   )
   useEffect(() => {
-    if (activeSlot && activeSlotUnread) dispatch(markSlotRead(activeSlot))
+    if (activeSlot && activeSlotUnread) {
+      dispatch(markSlotRead(activeSlot))
+      // Viewing the thread is a read here too — relay it so other windows
+      // retire the bubble. Unconditional to match the local clear above:
+      // this surface already treats an open thread as read even in a hidden
+      // tab, and a relay suppressed here could never re-fire (the local
+      // clear settles the effect's deps before the tab becomes visible).
+      emitSlotRead(activeSlot)
+    }
   }, [activeSlot, activeSlotUnread, dispatch])
 
   // Per-row unread marker: the rail badge says "1", this says WHICH member.
