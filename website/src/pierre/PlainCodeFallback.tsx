@@ -1,6 +1,7 @@
-import { useId, type CSSProperties, type ReactNode } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react'
 import type { FileContents } from '@pierre/diffs'
 import type { PierreDiffOptions } from './config'
+import { changedLineSpan } from '../utils/diffLineCounts'
 import { i18nT } from '../i18n/t'
 import { useLanguageGeneration } from '../i18n/useLanguageGeneration'
 
@@ -66,6 +67,34 @@ export function PlainFilePairFallback({
   useLanguageGeneration()
   const titleId = useId()
   const simplifiedLabel = i18nT('components.fileChangeChips.large_file_simplified_view')
+
+  // The fallback is handed two whole files and no hunks, so it finds WHERE the
+  // change is with a bounded prefix/suffix scan (see `changedLineSpan`) rather
+  // than a diff — the synchronous diff is exactly what the render budget
+  // rejected. Split each side into lines ONCE and remember the changed line
+  // range so the view can mark those rows and land on the first one instead of
+  // stranding the reader at line 1.
+  const oldLines = useMemo(() => (oldFile?.contents ? oldFile.contents.split('\n') : []), [oldFile?.contents])
+  const newLines = useMemo(() => (newFile?.contents ? newFile.contents.split('\n') : []), [newFile?.contents])
+  const span = useMemo(() => changedLineSpan(oldLines, newLines), [oldLines, newLines])
+  const anchorKey = span == null
+    ? null
+    : span.oldEnd > span.oldStart ? 'old' : span.newEnd > span.newStart ? 'new' : null
+  // The bounded content scroller and the first changed row, so the mount effect
+  // can anchor the card without moving the surrounding transcript.
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const firstChangedRef = useRef<HTMLSpanElement | null>(null)
+  useLayoutEffect(() => {
+    const content = contentRef.current
+    const changed = firstChangedRef.current
+    if (!content || !changed) return
+    // Scroll THIS card's own bounded region directly. `scrollIntoView()` can
+    // choose the transcript/page as another scroll ancestor and strand the card
+    // at line 1 after the surrounding virtualizer settles. `offsetTop` is the
+    // changed row's position inside the card; center it when there is room.
+    content.scrollTop = Math.max(0, changed.offsetTop - content.clientHeight / 2)
+  }, [span, oldFile?.contents, newFile?.contents])
+
   const filename = newFile?.name ?? oldFile?.name
   if (filename == null) return null
 
@@ -75,9 +104,9 @@ export function PlainFilePairFallback({
   const collapsed = options?.collapsed === true
   const wraps = options?.overflow === 'wrap'
   const sides = [
-    oldFile == null ? null : { file: oldFile, marker: '−', key: 'old' },
-    newFile == null ? null : { file: newFile, marker: '+', key: 'new' },
-  ].filter((side): side is { file: FileContents; marker: string; key: string } => side != null)
+    oldFile == null ? null : { file: oldFile, lines: oldLines, marker: '−', key: 'old' as const, start: span?.oldStart, end: span?.oldEnd },
+    newFile == null ? null : { file: newFile, lines: newLines, marker: '+', key: 'new' as const, start: span?.newStart, end: span?.newEnd },
+  ].filter((side): side is { file: FileContents; lines: string[]; marker: string; key: 'old' | 'new'; start: number | undefined; end: number | undefined } => side != null)
   const split = options?.diffStyle === 'split' && sides.length === 2
 
   return (
@@ -103,17 +132,19 @@ export function PlainFilePairFallback({
       )}
       {!collapsed && (
         <div
+          ref={contentRef}
           data-pierre-plain-content
           style={contentStyle}
-          className={`${split ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'} grid min-w-0 overflow-auto`}
+          className={`${split ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'} relative grid min-w-0 overflow-auto`}
         >
           {!showHeader && (
             <div className={`${split ? 'md:col-span-2' : ''} border-b border-border bg-bg px-3 py-1 text-[11px] text-muted`}>
               {simplifiedLabel}
             </div>
           )}
-          {sides.map(({ file, marker, key }, index) => {
+          {sides.map(({ file, lines, marker, key, start, end }, index) => {
             const headingId = `${titleId}-${key}`
+            const changeToken = key === 'new' ? 'add' : 'del'
             return (
               <section
                 key={key}
@@ -132,7 +163,14 @@ export function PlainFilePairFallback({
                 </h3>
                 {/* A native pre is the actual horizontal scroller. The named
                     props give it a tab stop so keyboard users can reach clipped
-                    long lines without weakening lint for other elements. */}
+                    long lines without weakening lint for other elements.
+
+                    Keep the DOM constant-size even for a 40k-line file: plain
+                    prefix text, ONE marked changed span, plain suffix text. The
+                    bounded scan finds only the outer changed range; this does
+                    not build a diff row per line or ask Pierre to highlight it.
+                    `boxDecorationBreak: clone` paints the marker band on each
+                    wrapped line of the span without adding DOM nodes. */}
                 <pre
                   data-pierre-plain-side={key}
                   {...KEYBOARD_SCROLL_REGION_PROPS}
@@ -141,7 +179,30 @@ export function PlainFilePairFallback({
                     wraps ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'
                   }`}
                 >
-                  {file.contents}
+                  {start != null && end != null && end > start ? (
+                    <>
+                      {start > 0 ? `${lines.slice(0, start).join('\n')}\n` : ''}
+                      <span
+                        ref={key === anchorKey ? firstChangedRef : undefined}
+                        data-changed=""
+                        data-first-changed-line={start + 1}
+                        style={{
+                          backgroundColor: `var(--diff-${changeToken})`,
+                          boxShadow: `inset 2px 0 0 0 var(--diff-${changeToken}-text)`,
+                          boxDecorationBreak: 'clone',
+                          WebkitBoxDecorationBreak: 'clone',
+                          color: `var(--diff-${changeToken}-text)`,
+                          paddingLeft: '0.5ch',
+                        }}
+                      >
+                        {/* The sign is a non-colour cue at the first changed
+                            line; the tinted span marks every line in the range. */}
+                        <span aria-hidden className="select-none">{marker} </span>
+                        {lines.slice(start, end).join('\n') || '\u200b'}
+                      </span>
+                      {end < lines.length ? `\n${lines.slice(end).join('\n')}` : ''}
+                    </>
+                  ) : lines.join('\n')}
                 </pre>
               </section>
             )
