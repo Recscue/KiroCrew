@@ -274,7 +274,15 @@ capped, stored and hashed, and never opened, resolved, stat-ed or fetched. It is
 the RAW uri while only the redacted form is stored or audited — redaction is lossy, so two
 uris differing only in a same-length credential-shaped segment reduce to the same string,
 and hashing that would merge two documents into one group. A caller needing the bytes at
-that location reads them itself and passes `content`.
+that location reads them itself and passes `content`. The redacted form is persisted in
+`agent_item_state.source_uri` on every state write, and citation enrichment attaches it
+to the document's search hits (§4), so a reader can see where the adding agent said the
+document came from — the value is writer-supplied and never resolved, so it is a stated
+origin, not a verified one — while `agent://` stays the aggregate row's control uri
+only. Rows written before the column existed carry NULL and fall back to the aggregate
+uri; a later add of the same document backfills them, including the unchanged-content
+duplicate shortcut, which writes no state row and therefore repairs the locator
+in place.
 
 This replaces the never-built server-side doc-link scanner. Rather than Kiro Crew
 regex-matching links in chat and fetching them unattended, the agent reads the document
@@ -419,7 +427,7 @@ Both entity extraction (`EntityExtractor`) and internal-URL fetch (`agent_fetch.
 - **RRF fusion (`_rrf_fuse`, k=60)** — per-leg weights align positionally with `(keyword, graph, vector) = (1.0, 1.0, VECTOR_RRF_WEIGHT=2.0)` so semantically-strong matches dominate when the keyword leg returns literal junk. Results are tie-broken by recency (`updated_at`), and each result's `match_type` records which legs it appeared in (`keyword+graph+vector`).
   - **The keyword leg's rank-1 hit is protected from truncation.** The weight above is what makes a keyword-only document losable: a query carrying an exact error string, a ticket id or a rare technical term can have its one correct document pushed past `limit` by weighted semantic neighbours, and the caller sees related-but-wrong rows with no signal that the right one was found and dropped. When that happens `search` **appends** the keyword winner as one extra trailing row, so a response may carry `limit + 1` rows. Only rank 1 is protected, and nothing already ranked is removed, reordered or demoted — the rescue can only add. The appended row carries its real fused score (the tool caller's `min_score` floor depends on it: a keyword-rank-1-only row scores `1.0 / (60 + 1) = 0.0164`, which clears `0.012`) and its normal `match_type`, and it is appended *before* the citation-enrichment passes below, so it is exactly as citable as a ranked row. A keyword hit whose item no longer resolves (a stale FTS row) adds nothing.
 
-**Citation enrichment** — `_attach_source_locations` batch-fetches `source_locations` (adds `section_title`, `chunk_range`, `anchor`); `_attach_citation_sources` adds `source_type`/`source_name`/`source_uri` plus the most specific per-document locator: `file_path` for folder/vault sources (from `folder_file_state`), `artifact_slug`/`artifact_name` for the aggregate artifact source (deep-links `/artifacts/<slug>`). Missing/unmapped sources degrade cleanly (extra keys simply absent).
+**Citation enrichment** — `_attach_source_locations` batch-fetches `source_locations` (adds `section_title`, `chunk_range`, `anchor`); `_attach_citation_sources` adds `source_type`/`source_name`/`source_uri` plus the most specific per-document locator: `file_path` for folder/vault sources (from `folder_file_state`), `artifact_slug`/`artifact_name` for the aggregate artifact source (deep-links `/artifacts/<slug>`), and for the aggregate agent source the hit's `source_uri` is replaced with the document's own stored locator (from `agent_item_state.source_uri`) — the aggregate's `agent://` is a control uri, not a citation, and stands only for legacy rows whose column is NULL. Missing/unmapped sources degrade cleanly (extra keys simply absent).
 
 ### On-loop connection guard (`on_loop_db.py`)
 
