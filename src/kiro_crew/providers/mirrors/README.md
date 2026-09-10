@@ -69,8 +69,7 @@ the question. Both are needed — a folder alone is just a tidier place to forge
 
 Beside the mirror, not inside it, when it is substantial:
 
-- `acp/session_mcp.py` — Claude Code's spec-entry to array-element translation,
-  the `tools` allowlist and the registry filter.
+- `acp/session_mcp.py` — the spec-entry to array-element translation, the `tools` allowlist and the registry filter. Shared: both session-array backends read it, and what is genuinely per-adapter stays in that adapter's mirror (codex's `codex_elements` narrows this output).
 - `acp/kas_permissions.py` — KAS's `allowedTools` to `permissions` mapping.
 
 A mirror declares and routes; a helper translates.
@@ -80,6 +79,22 @@ A mirror declares and routes; a helper translates.
 | Backend | Mirror | Notes |
 |---|---|---|
 | `claude` | `claude_code.py` | both faces; `hooks` is its one open `no-channel` |
+| `codex` | `codex.py` | wire face only — Crew writes no codex file, so the `session/new` array is its whole channel. Two open `no-channel`s: `hooks` and `disabledTools` |
 | `` (kiro-cli) | `NO_MIRROR` | reads the spec itself via `--agent`; only a small `cli.json` overlay, whose home is still an open decision |
 | `kas` | `NO_MIRROR`, pending | has the most complete projection of any backend, not yet moved here |
-| `codex` | `NO_MIRROR` | known but not selectable, so no session to configure yet |
+
+## Verify against the adapter, not against the last mirror
+
+Codex is the reason this section exists. Its hook sat at `[]` behind a docstring
+that stated, as the one established constraint, that codex-acp answers `-32602`
+for the whole `session/new` when it meets a transport it does not advertise. A
+real adapter says otherwise: a malformed stdio element — and even an array member
+that is not an object — leaves `session/new` succeeding with that element
+dropped, while `sse` is the one fatal shape and fails with `-32600`. The fear was
+the wrong code AND the wrong scope, and it had been load-bearing for a whole
+harness's tool surface.
+
+So a new mirror's transport and environment rules are MEASURED. `codex.py` cites
+what was run and `test/test_codex_session_mcp.py` pins it against an installed
+adapter, skipping cleanly when there is none. Copying the neighbouring mirror's
+shape is the cheap half; only the adapter can tell you whether it is accepted.

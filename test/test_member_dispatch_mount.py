@@ -32,6 +32,7 @@ from kiro_crew.acp.client import AcpClient
 from kiro_crew.acp.kas_agents import to_client_custom_agent
 from kiro_crew.acp.types import (
     ACP_BACKEND_CLAUDE,
+    ACP_BACKEND_CODEX,
     ACP_BACKEND_KAS,
     ACP_BACKEND_KIRO,
     ACP_BACKENDS_MEMBER_DISPATCH,
@@ -50,7 +51,9 @@ class TestCapabilitySet:
         """kiro v2 reads its template from disk and exposes no per-session
         channel, so it must never be in the set: a member session on it runs as
         plain chat rather than mounted-and-refused."""
-        assert ACP_BACKENDS_MEMBER_DISPATCH == frozenset({ACP_BACKEND_CLAUDE, ACP_BACKEND_KAS})
+        assert ACP_BACKENDS_MEMBER_DISPATCH == frozenset(
+            {ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX, ACP_BACKEND_KAS}
+        )
         assert ACP_BACKEND_KIRO not in ACP_BACKENDS_MEMBER_DISPATCH
 
 
@@ -201,11 +204,18 @@ class TestKasMemberProjection:
 
 
 class _ClientStub:
-    """The four attributes ``_append_member_dispatch_server`` reads."""
+    """The attributes ``_append_member_dispatch_server`` reads.
+
+    ``_permission_surface_governed`` is the REAL property object, not a stand-in
+    bool: the precondition is backend-dependent (claude answers by file ownership,
+    codex answers structurally because its routing is enforced), so a hardcoded
+    True here would let that logic change without any test noticing.
+    """
 
     backend = ACP_BACKEND_CLAUDE
     _session_key = MEMBER_KEY
     _claude_settings_authored = True
+    _permission_surface_governed = AcpClient._permission_surface_governed
 
 
 def _base_servers() -> list[dict]:
@@ -238,6 +248,23 @@ class TestClaudeMemberAppend:
         stub = _ClientStub()
         stub.backend = ACP_BACKEND_KIRO
         assert self._run(stub) == _base_servers()
+
+    def test_codex_mounts_without_any_claude_settings_file(self):
+        """Codex's precondition is not claude's, and copying claude's refused it.
+
+        Claude needs to OWN ``settings.local.json`` because its routing is
+        ``SEEDED_SETTINGS`` -- declared, not enforced -- so a ``permissions.allow``
+        in a file Crew did not author pre-approves the call and Crew's gate never
+        fires. Codex has no such file: its routing is ``SESSION_CONFIG``, the one
+        mechanism in ``ENFORCED_ROUTINGS``, so a session that cannot arm
+        ``mode=read-only`` is refused before it prompts. Asking codex for claude's
+        flag would have left every codex DM thread as plain chat.
+        """
+        stub = _ClientStub()
+        stub.backend = ACP_BACKEND_CODEX
+        stub._claude_settings_authored = False
+        out = self._run(stub)
+        assert [e["name"] for e in out][-1] == MEMBER_DISPATCH_SERVER
 
     def test_same_named_entry_is_replaced_not_duplicated(self):
         stub = _ClientStub()

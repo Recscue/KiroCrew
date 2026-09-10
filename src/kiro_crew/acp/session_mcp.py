@@ -1,17 +1,21 @@
 """Kiro agent spec -> the ACP ``session/new`` ``mcpServers`` array.
 
 For a harness in :data:`~kiro_crew.acp_backends.ACP_BACKENDS_SESSION_MCP_ARRAY`,
-the ``session/new`` / ``session/load`` ``mcpServers`` parameter is where MCP
-servers come from and the only place: claude-agent-acp, its one member today,
-does not read ``~/.kiro/agents/<name>.json``. kiro-cli reaches the same servers
+the ``session/new`` / ``session/load`` ``mcpServers`` parameter is where Kiro
+Crew's MCP servers come from and the only place: neither claude-agent-acp nor
+codex-acp reads ``~/.kiro/agents/<name>.json``. kiro-cli reaches the same servers
 through ``--agent``, which is why that backend passes no array at all. Without
 the translation here such a session runs with ZERO Kiro Crew tools -- the harness
 itself works (prompts, streaming, permissions) but ``send_message``,
 ``spawn_run``, ``cron_add`` and every user-installed server are simply absent.
 
 Nothing here is Anthropic-specific by design: the module is keyed on the
-capability, not on the harness, so the next adapter that reads no agent spec
-joins the set rather than growing a second translator.
+capability, not on the harness, so the next adapter that reads no agent spec of
+Crew's joins the set rather than growing a second translator. What is genuinely
+per-adapter stays with that adapter's mirror -- codex narrows this output in
+:mod:`kiro_crew.providers.mirrors.codex` (it refuses ``sse`` outright, and its
+child processes inherit no environment), and the shape notes below are
+claude-agent-acp's own zod schema.
 
 The agent spec stays the single source of truth; there is no second,
 claude-shaped registry to keep in sync. It is read per spawn, so installing or
@@ -91,7 +95,12 @@ logger = logging.getLogger(__name__)
 # install is broken. Re-derived, not read from the spec, is also what keeps them
 # out of the registry filter below: they are the host's own process, not a
 # third-party server the admin's catalog governs.
-_CONTROL_PLANE_SERVERS = ("kirocrew-core", "kirocrew-cron")
+#
+# PUBLIC because a second mirror needs to tell Crew's own servers apart from a
+# third party's: the codex projection carries KIROCREW_SESSION_KEY on the control
+# plane and must NOT carry it on anything else, and a name-by-name copy of this
+# tuple beside that decision is how the two drift apart.
+CONTROL_PLANE_SERVERS = ("kirocrew-core", "kirocrew-cron")
 
 # kiro-cli's enterprise-governance discriminator, mirrored rather than imported
 # (``agent._MCP_REGISTRY_TYPE`` is private; a ratchet test pins the two equal).
@@ -413,7 +422,7 @@ def session_mcp_servers(
             )
             servers.pop(name)
 
-    for name in _CONTROL_PLANE_SERVERS:
+    for name in CONTROL_PLANE_SERVERS:
         managed = managed_mcp_spec_entry(name)
         if managed is not None:
             servers[name] = managed

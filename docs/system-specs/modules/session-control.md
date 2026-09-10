@@ -241,9 +241,14 @@ itself opened. Member sessions also bypass the provider warm pool
 default backend, so a warm hit would skip both the member backend route and
 the mount. The member backend is `agent.member_acp_backend` (default `kas`),
 and requires a wire-capable backend (`ACP_BACKENDS_MEMBER_DISPATCH`: the
-claude seam and KAS); kiro-cli v2 reads its template from disk and exposes no
-per-session channel, so a member session on it runs as plain chat — the tools
-are simply not mounted, never mounted-and-refused. Because the mount is
+claude seam, codex and KAS); kiro-cli v2 reads its template from disk and
+exposes no per-session channel, so a member session on it runs as plain chat —
+the tools are simply not mounted, never mounted-and-refused. Codex's
+precondition for the mount is not claude's: claude must OWN the
+`settings.local.json` that decides whether a call asks, because its routing is
+declared-not-enforced, while codex's `mode=read-only` assertion is in
+`tool_gate.ENFORCED_ROUTINGS` and refuses the session outright when it cannot
+be armed (`AcpClient._permission_surface_governed`). Because the mount is
 session-scoped, no other session on the same agent template gains the tools,
 preserving the two-part grant for ordinary agents (the switch AND the
 per-agent server assignment).

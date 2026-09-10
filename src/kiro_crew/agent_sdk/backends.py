@@ -164,11 +164,19 @@ ACP_BACKENDS_KNOWN: FrozenSet[str] = frozenset(
 #: the array is the ENTIRE MCP surface of the session: an empty one means the
 #: harness works while every Crew tool is silently absent.
 #:
+#: codex-acp is the second member, and it joins on the same terms rather than on
+#: an exact likeness to claude: it does load a config file of its OWN
+#: (``~/.codex/config.toml``, which Crew never writes — create-or-decline), and its
+#: ``build_session_config`` merges the client's array on top of what that file
+#: declared. What makes it a member is the part that matters here: it reads no
+#: ``~/.kiro/agents/<name>.json``, so this array is the only channel CREW has, and
+#: an empty one means Crew's own control plane never reaches the session.
+#:
 #: A membership set rather than ``_is_claude`` because this is a property of the
 #: transport, not of Anthropic: any ACP adapter that does not read Crew's agent
 #: spec belongs here, and the next such harness should join the set rather than
 #: add a second branch at the call site (harness-parity H6).
-ACP_BACKENDS_SESSION_MCP_ARRAY: FrozenSet[str] = frozenset({ACP_BACKEND_CLAUDE})
+ACP_BACKENDS_SESSION_MCP_ARRAY: FrozenSet[str] = frozenset({ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX})
 
 # ── The selectable registry ──
 
@@ -415,12 +423,21 @@ ACP_BACKENDS_SESSION_SHARING = frozenset({ACP_BACKEND_KIRO})
 # definition over the wire (``_meta.kiro.customAgents``). kiro-cli v2 reads
 # the template from disk at spawn and exposes no wire channel, so a member
 # session on it stays a plain chat: the dispatch tools are simply not
-# mounted, never mounted-and-refused. codex-acp is DELIBERATELY excluded
-# too: its session MCP array is still unimplemented (``[]`` — see
-# ``_codex_session_mcp_servers``), so it has no per-session mount to ride;
-# exclusion withholds only the extra auto-approve grant, the fail-safe
-# direction.
-ACP_BACKENDS_MEMBER_DISPATCH = frozenset({ACP_BACKEND_CLAUDE, ACP_BACKEND_KAS})
+# mounted, never mounted-and-refused.
+#
+# codex-acp is now a member: ``providers/mirrors/codex.py`` gives it the
+# per-session mount its exclusion was waiting on. Its precondition is NOT
+# claude's, and the difference is worth stating because copying claude's would
+# have refused every codex member thread. Claude's gate is
+# ``_claude_settings_authored`` — Crew must OWN the file that decides whether a
+# tool call asks, because claude's routing is ``SEEDED_SETTINGS``, which this core
+# declares and does NOT enforce: a ``permissions.allow`` in a file Crew does not
+# own pre-approves the call, so Crew's gate never fires. Codex has no such file in
+# play. Its routing is ``SESSION_CONFIG``, the one mechanism in
+# ``tool_gate.ENFORCED_ROUTINGS``, so a session that cannot arm ``mode=read-only``
+# is REFUSED before its first prompt. That is a stronger guarantee than file
+# ownership, obtained structurally, which is why membership here is safe.
+ACP_BACKENDS_MEMBER_DISPATCH = frozenset({ACP_BACKEND_CLAUDE, ACP_BACKEND_CODEX, ACP_BACKEND_KAS})
 
 # Backends implementing the ``_session/steer`` extension (mid-turn steer). Neither
 # claude-agent-acp nor codex-acp implements it, so a steer sent to either would be

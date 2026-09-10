@@ -3644,6 +3644,37 @@ class AcpClient:
         """
         return pooled_session_servers(self._mcp_gateway_overlay, self._agent, self._channel_id)
 
+    @property
+    def _permission_surface_governed(self) -> bool:
+        """Whether Crew can still WITHHOLD a tool it delivers to this session.
+
+        One question, two mechanisms, and the reason they cannot collapse into one
+        flag is that they fail in opposite directions.
+
+        * An ENFORCED routing (``tool_gate.ENFORCED_ROUTINGS``, i.e.
+          ``SESSION_CONFIG`` -- codex) answers YES structurally. The asking is
+          asserted per session over ``session/set_config_option`` and
+          ``_apply_session_permission_routing`` REFUSES the session when the option
+          was not advertised or the write failed, before any prompt can run. There
+          is no file for an operator to pre-approve a tool in, and nothing to own.
+        * An UNENFORCED one (``SEEDED_SETTINGS`` -- claude) answers only as far as
+          file ownership goes. A ``permissions.allow`` entry in a
+          ``settings.local.json`` Crew did not author pre-approves the call, which
+          then never sends ``session/request_permission``, so Crew's gate never
+          fires and nothing refuses the session either. Ownership of the file Crew
+          seeded is the whole of the evidence, which is why the flag is the answer
+          there.
+
+        Reading the routing FIRST rather than the flag is what keeps a codex
+        session from being judged by a claude file it does not have: ``getattr``
+        alone would return False for every codex session and withhold every Crew
+        tool from it on the strength of a condition that does not describe this
+        backend.
+        """
+        if acp_tool_gate.is_enforced(self.backend):
+            return True
+        return bool(getattr(self, "_claude_settings_authored", False))
+
     def _resolve_session_mcp_servers(self) -> list[dict[str, Any]]:
         """Translate the agent spec into this session's ``mcpServers`` array.
 
@@ -3686,8 +3717,13 @@ class AcpClient:
         params = mirror.session_params(
             self._agent,
             stub_server_names=stubbed,
-            permission_surface_owned=getattr(self, "_claude_settings_authored", False),
+            permission_surface_owned=self._permission_surface_governed,
             work_dir=self._work_dir,
+            # A codex stdio child starts from env_clear() plus an allowlist, so
+            # Crew's own servers reach it with an identity only if the ELEMENT
+            # carries one. A mirror cannot discover either value; the client can.
+            session_key=self._session_key or "",
+            channel_id=self._channel_id or "",
         )
         servers = params.get("mcpServers") or []
         out = list(servers) if isinstance(servers, list) else []
@@ -3715,10 +3751,10 @@ class AcpClient:
         if not is_member_session_key(self._session_key):
             return servers
         session_key = self._session_key or ""
-        if not getattr(self, "_claude_settings_authored", False):
+        if not self._permission_surface_governed:
             logger.warning(
-                "member session %s: permission surface not Crew-owned — session "
-                "control is not mounted; the DM thread runs as plain chat",
+                "member session %s: Crew cannot withhold a tool it delivers here — "
+                "session control is not mounted; the DM thread runs as plain chat",
                 self._session_key,
             )
             return servers
@@ -3737,9 +3773,11 @@ class AcpClient:
 
         Empty for kiro-cli, which receives the same servers through ``--agent``.
         For a harness in ``ACP_BACKENDS_SESSION_MCP_ARRAY`` the array is the ONLY
-        channel — the adapter reads no agent spec of its own — so it is built by
+        channel — the adapter reads no agent spec of CREW'S — so it is built by
         translating this session's agent spec (see
-        :mod:`kiro_crew.acp.session_mcp`).
+        :mod:`kiro_crew.acp.session_mcp`). "Of Crew's" is the load-bearing half:
+        codex-acp does load a config file of its own, and being a member says only
+        that this array is the sole channel from HERE to there.
 
         **In-memory, and deliberately so.** The translation reads disk, but it
         runs once per spawn in :meth:`_resolve_session_mcp_servers` and lands in
@@ -3801,31 +3839,42 @@ class AcpClient:
     def _codex_session_mcp_servers(self) -> list:
         """MCP server array passed to a codex ``session/new`` / ``session/load``.
 
-        The codex twin of :meth:`_claude_session_mcp_servers`, still ``[]`` -- and
-        codex IS in ``BASELINE_SELECTABLE_BACKENDS``, so this is a state a plain
-        public build reaches TODAY, not a dormant seam. Nothing is PROJECTED onto a
-        codex session: the only entries it gets are the pooled broker stubs
-        ``_pooled_mcp_servers`` appends for every backend alike, empty when the
-        shared gateway is off. So Crew's own control plane -- ``kirocrew-core``,
-        ``kirocrew-cron`` -- is never projected here, but it is NOT thereby absent:
-        a stub the overlay wrapped still mounts, which makes the gateway rather than
-        this hook the thing that decides. With the gateway off, a codex session has
-        no MCP tools at all.
+        The codex twin of :meth:`_claude_session_mcp_servers`, and it must stay
+        non-empty. An empty array here is byte-identical for kiro-cli, which gets
+        its servers through ``--agent``, and a REAL GAP for codex: codex-acp reads
+        no ``~/.kiro/agents/<name>.json``, so nothing Crew declares reaches the
+        session and only the shared gateway's broker stubs arrive -- which makes the
+        GATEWAY rather than this hook decide whether Crew's own control plane is
+        there at all, and with that gateway off (the default) leaves the session
+        with no MCP tools whatsoever. codex is in ``BASELINE_SELECTABLE_BACKENDS``,
+        so a plain public build reaches exactly that.
 
-        It stays ``[]`` because no projection has been written and the shape this
-        adapter accepts is unverified, NOT because nobody can reach it. The registry
-        in :mod:`kiro_crew.providers.mirrors` records that as codex's declared state
-        rather than leaving the omission unexplained; when the mirror is written it
-        goes in that folder beside claude's and this hook returns it.
+        The translation lives in the mirror
+        (:mod:`kiro_crew.providers.mirrors.codex`), not here, for the same reason
+        claude's does: projecting the agent spec onto a backend's native shape is
+        one named contract with one implementation per backend. Two rules there are
+        codex's own and both were MEASURED against a real adapter rather than
+        assumed -- an ``sse`` element is dropped (codex-acp answers ``-32600`` for
+        the WHOLE ``session/new``), and Crew's own servers carry
+        ``KIROCREW_SESSION_KEY`` on the element because codex-rs launches a stdio
+        server with ``env_clear()`` plus an allowlist and inherits nothing.
 
-        Empty rather than guessed is the fail-safe direction, and the one
-        established constraint is why: codex-acp answers ``session/new`` with
-        ``-32602`` for a transport it does not advertise rather than skipping that
-        one server, so a single bad entry costs the whole session. An edition
-        overriding this must drop any entry whose transport the adapter does not
-        advertise.
+        Only ``sse`` is fatal, and the scope matters because it is tempting to
+        generalise it into sending nothing at all: a malformed stdio element, or an
+        array member that is not an object, leaves ``session/new`` SUCCEEDING with
+        that element dropped, and ``sse`` fails with ``-32600`` rather than the
+        ``-32602`` an unadvertised transport is easy to assume. See
+        ``test/test_codex_session_mcp.py::test_real_codex_acp_accepts_the_crew_stdio_element``.
+
+        The seam is deliberately KEPT rather than replaced by a capability-set
+        call: an edition may override this method, and swapping the call site for a
+        set membership test would silently stop calling that override.
+
+        In-memory only. The spawn path warms ``_session_mcp_cache`` off the loop, so
+        this accessor adds no scheduling or failure point to a call site shared with
+        kiro-cli (harness-parity H13).
         """
-        return []
+        return self._session_mcp_servers()
 
     def _claude_local_settings_path(self) -> Path:
         return self._work_dir / ".claude" / "settings.local.json"
@@ -5251,6 +5300,18 @@ class AcpClient:
                     f"The 'codex' CLI alone does not serve ACP."
                 )
             argv = codex_argv
+            # Translate the agent spec into this session's MCP array HERE, on
+            # codex's own arm, for exactly the reason the claude arm above does it
+            # on its own: the translation reads disk, and doing it at the shared
+            # session/new call site would put an executor hop and a new failure
+            # mode on EVERY backend's construction path, kiro-cli included
+            # (harness-parity H13). No ordering constraint of claude's applies --
+            # codex has no settings file to author first, because its permission
+            # routing is asserted per session rather than seeded (see
+            # _permission_surface_governed). Correctness does not depend on this
+            # warm: _session_mcp_servers resolves a cold cache itself; the warm is
+            # what keeps the read off the loop.
+            self._session_mcp_cache = await asyncio.to_thread(self._resolve_session_mcp_servers)
             # Fail closed BEFORE the spawn when the mask below would be dropped:
             # several wrap_argv paths return without applying extra_hidden_dirs,
             # which would start an enforced adapter with no compensating control
