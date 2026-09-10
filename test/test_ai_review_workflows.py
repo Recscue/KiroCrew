@@ -1996,9 +1996,10 @@ class TestUxScopeGateSurvivesAWideDiff:
         assert "printf" not in gate, f"{lane}: writer is back in the pipeline"
 
 
-UX_BLIND_STEP = "Blind read of the committed screenshots (Fable 5)"
+UX_BLIND_STEP = "Blind read of the screenshots (Fable 5)"
 UX_REVIEW_STEP = "UX review (Fable 5)"
 UX_EVIDENCE_STEP = "Collect blind-read evidence"
+FORK_ATTACHMENT_STEP = "Fetch attachment evidence from the PR description"
 UX_CAPTURE_STEP = "Capture the blind-read report"
 
 
@@ -2194,12 +2195,127 @@ class TestUxReviewReadsTheScreenshotsBlindFirst:
         assert "authentic.patch" in system
         assert "never applied to the tree" in fork
 
+    # Byte fixtures libmagic types by CONTENT. The evidence step trusts the
+    # bytes and never the URL, so a fixture needs a real signature: a PNG with
+    # its IHDR chunk, a JFIF header, a GIF header, an EBML header whose DocType
+    # is webm, and plain text for the "not media" case.
+    PNG = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\x0dIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+        b"\x1f\x15\xc4\x89"
+    )
+    JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00"
+    GIF = b"GIF89a"
+    WEBM = (
+        b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\xf7\x81\x01\x42\xf2\x81\x04"
+        b"\x42\xf3\x81\x08\x42\x82\x84webm\x42\x87\x81\x02\x42\x85\x81\x02"
+    )
+    TEXT = b"not an image\n"
+    MIME = {PNG: "image/png", JPEG: "image/jpeg", GIF: "image/gif", WEBM: "video/webm"}
+
+    def _require_file_types_the_fixtures(self, tmp_path: Path) -> None:
+        """The step types each download with file(1); the host's libmagic has
+        to read the fixtures the way ubuntu-latest does, or the test would
+        measure the host's magic database rather than the script."""
+        if shutil.which("file") is None:
+            pytest.skip("the evidence step types downloads with file(1)")
+        probe = tmp_path / "probe"
+        for payload, mime in self.MIME.items():
+            probe.write_bytes(payload)
+            got = subprocess.run(
+                ["file", "--mime-type", "-b", str(probe)],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            ).stdout.strip()
+            if got != mime:
+                pytest.skip(f"this host's file(1) types the {mime} fixture as {got}")
+
+    def _curl_stub(self, tmp_path: Path, fixtures: dict[str, bytes | str]) -> Path:
+        """A `curl` that records its argv and serves the fixture the URL names.
+
+        Every invocation appends its arguments, one per line, then a `--`
+        separator, to the log the test reads back. The last argument is the
+        URL; `-o` names the output path. A fixture value of ``FAIL:<code>``
+        exits with that code instead of writing, and a URL with no fixture
+        exits 6 (could not resolve host), which is what a download of a host
+        the allowlist should have excluded would look like.
+        """
+        stub_dir = tmp_path / "stub-bin"
+        stub_dir.mkdir(exist_ok=True)
+        fixture_dir = tmp_path / "fixtures"
+        fixture_dir.mkdir(exist_ok=True)
+        table = []
+        for index, (url, payload) in enumerate(fixtures.items()):
+            if isinstance(payload, bytes):
+                path = fixture_dir / f"fixture-{index}"
+                path.write_bytes(payload)
+                table.append(f"{url}\t{path.as_posix()}")
+            else:
+                table.append(f"{url}\t{payload}")
+        (tmp_path / "curl-map.tsv").write_text(
+            "".join(line + "\n" for line in table), encoding="utf-8"
+        )
+        self._curl_log = tmp_path / "curl-argv.log"
+        self._curl_log.touch()
+        stub = stub_dir / "curl"
+        stub.write_text(
+            "#!/bin/sh\n"
+            'log="$CURL_STUB_LOG"; map="$CURL_STUB_MAP"\n'
+            'out=""; prev=""\n'
+            'for a in "$@"; do\n'
+            '  printf \'%s\\n\' "$a" >> "$log"\n'
+            '  [ "$prev" = "-o" ] && out="$a"\n'
+            '  prev="$a"\n'
+            "done\n"
+            'url="$prev"\n'
+            "printf '%s\\n' -- >> \"$log\"\n"
+            'fixture="$(awk -F \'\\t\' -v u="$url" \'$1 == u { print $2; exit }\' "$map")"\n'
+            'case "$fixture" in\n'
+            '  "") echo "curl: (6) Could not resolve host" >&2; exit 6 ;;\n'
+            '  FAIL:*) echo "curl: (22) The requested URL returned error" >&2; exit "${fixture#FAIL:}" ;;\n'
+            '  *) cp "$fixture" "$out" ;;\n'
+            "esac\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        stub.chmod(0o755)
+        return stub_dir
+
+    def _curl_calls(self) -> list[list[str]]:
+        """The recorded curl invocations, one argv list each."""
+        calls: list[list[str]] = []
+        current: list[str] = []
+        for line in self._curl_log.read_text(encoding="utf-8").splitlines():
+            if line == "--":
+                calls.append(current)
+                current = []
+            else:
+                current.append(line)
+        return calls
+
     def _run_evidence_gate(
-        self, repo: Path, base: str, tmp_path: Path
+        self,
+        repo: Path,
+        base: str,
+        tmp_path: Path,
+        body: str = "",
+        fixtures: dict[str, bytes | str] | None = None,
+        max_shots: str = "40",
+        max_clips: str | None = None,
     ) -> tuple[str, str, str, str, Path]:
         bash = _bash()
         if bash is None:
             pytest.skip("the evidence step runs only under Bash")
+        env = self._git_env(tmp_path)
+        if fixtures is not None:
+            self._require_file_types_the_fixtures(tmp_path)
+            stub_dir = self._curl_stub(tmp_path, fixtures)
+            env["PATH"] = f"{stub_dir}{os.pathsep}{env.get('PATH', '')}"
+            env["CURL_STUB_LOG"] = str(self._curl_log)
+            env["CURL_STUB_MAP"] = str(tmp_path / "curl-map.tsv")
         script = _step_script(_workflow("ux-review.yml"), UX_EVIDENCE_STEP)
         blind_dir = tmp_path / "ux-blind"
         shots = tmp_path / "shots.txt"
@@ -2207,6 +2323,9 @@ class TestUxReviewReadsTheScreenshotsBlindFirst:
         clips = tmp_path / "clips.txt"
         github_output = tmp_path / "github_output"
         github_output.touch()
+        if max_clips is None:
+            # The cap the workflow actually ships, so the test exercises it.
+            max_clips = _step_env("ux-review.yml", UX_EVIDENCE_STEP)["MAX_CLIPS"]
         out = subprocess.run(
             [bash, "-c", script],
             check=False,
@@ -2215,17 +2334,22 @@ class TestUxReviewReadsTheScreenshotsBlindFirst:
             encoding="utf-8",
             cwd=repo,
             env={
-                **self._git_env(tmp_path),
+                **env,
                 "BASE_SHA": base,
+                "BODY": body,
+                "REPO": "example/repo",
                 "BLIND_DIR": blind_dir.as_posix(),
+                "FETCH_DIR": (tmp_path / "ux-fetch").as_posix(),
                 "SHOTS": str(shots),
                 "SHOT_MAP": str(shot_map),
                 "CLIPS": str(clips),
-                "MAX_SHOTS": "40",
+                "MAX_SHOTS": max_shots,
+                "MAX_CLIPS": max_clips,
                 "GITHUB_OUTPUT": str(github_output),
             },
         )
         assert out.returncode == 0, out.stderr
+        self._evidence_stdout = out.stdout
         return (
             shots.read_text(encoding="utf-8"),
             shot_map.read_text(encoding="utf-8"),
@@ -2341,6 +2465,307 @@ class TestUxReviewReadsTheScreenshotsBlindFirst:
         # spent reading nothing.
         blind = _step("ux-review.yml", UX_BLIND_STEP)
         assert "steps.evidence.outputs.screens == 'true'" in str(blind["if"])
+
+    def _code_only_ui_repo(self, tmp_path: Path) -> tuple[Path, str]:
+        """A repository whose head touches website/ and commits no image, so
+        every screenshot the step finds has to come from the PR description."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._git(repo, "init", "-q")
+        (repo / "README").write_text("base\n")
+        self._git(repo, "add", "README")
+        self._git(repo, "commit", "-qm", "base")
+        base = self._git(repo, "rev-parse", "HEAD")
+        (repo / "website").mkdir()
+        (repo / "website" / "App.tsx").write_text("x")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-qm", "head")
+        return repo, base
+
+    def test_the_evidence_step_downloads_attachments_from_the_pr_description(
+        self, tmp_path: Path
+    ) -> None:
+        """Execute the ACTUAL evidence script against a PR body. Evidence lives
+        in the description as GitHub attachments, so the step has to fetch
+        them into the same opaque pipeline a committed file goes through: an
+        image becomes shot-NN.<ext> with the URL, alt text and body order
+        hidden from the blind reader; a video is listed for the continuity
+        lens; a GIF is both. The body is untrusted, so only GitHub's asset
+        hosts may be fetched (a look-alike host and another repository's asset
+        path are never contacted), the same URL is fetched once, the download
+        carries no credential, and the type comes from the bytes: a text
+        payload and a failed download are each logged and skipped, never
+        fatal."""
+        repo, base = self._code_only_ui_repo(tmp_path)
+        shots = repo / "temp-screenshots" / "f"
+        shots.mkdir(parents=True)
+        (shots / "pinned-turn-chip.png").write_bytes(b"\x89PNG")
+        self._git(repo, "add", "-A")
+        self._git(repo, "commit", "-qm", "committed screenshot")
+        png = "https://github.com/user-attachments/assets/0f3b2c1a-1111-4bcd-9e8f-0123456789ab"
+        jpeg = "https://github.com/example/repo/assets/42/deadbeef-2222-4000-8000-000000000002"
+        webm = "https://user-images.githubusercontent.com/42/210000003-demo_clip.webm"
+        text = "https://github.com/user-attachments/assets/0f3b2c1a-4444-4bcd-9e8f-0123456789ab"
+        gone = "https://github.com/user-attachments/assets/0f3b2c1a-5555-4bcd-9e8f-0123456789ab"
+        gif = "https://github.com/user-attachments/assets/0f3b2c1a-8888-4bcd-9e8f-0123456789ab"
+        other_repo = "https://github.com/other/repo/assets/1/deadbeef-6666-4000-8000-000000000006"
+        look_alike = "https://evil.example.com/user-attachments/assets/0f3b2c1a-7777-4bcd"
+        body = (
+            "Pinned turn chip, before and after:\n"
+            f"![pinned turn chip]({png})\n"
+            f'<img src="{jpeg}" width="400">\n\n'
+            f"{webm}\n\n"
+            f"{png}\n"
+            f"![note]({text})\n"
+            f"![gone]({gone})\n"
+            f"![other]({other_repo})\n"
+            f"![evil]({look_alike})\n"
+            f"![restore]({gif})\n"
+        )
+        shot_list, shot_map, clip_list, output, blind_dir = self._run_evidence_gate(
+            repo,
+            base,
+            tmp_path,
+            body=body,
+            fixtures={
+                png: self.PNG,
+                jpeg: self.JPEG,
+                webm: self.WEBM,
+                text: self.TEXT,
+                gone: "FAIL:22",
+                gif: self.GIF,
+                other_repo: self.PNG,
+                look_alike: self.PNG,
+            },
+        )
+        # Description first, in body order, then the committed file; every
+        # copy is opaque and carries only the format the bytes earned.
+        prefix = blind_dir.as_posix()
+        assert shot_list.splitlines() == [
+            f"{prefix}/shot-01.png",
+            f"{prefix}/shot-02.jpg",
+            f"{prefix}/shot-03.gif",
+            f"{prefix}/shot-04.png",
+        ]
+        assert "pinned" not in shot_list and "github.com" not in shot_list
+        assert sorted(p.name for p in blind_dir.iterdir()) == [
+            "shot-01.png",
+            "shot-02.jpg",
+            "shot-03.gif",
+            "shot-04.png",
+        ]
+        assert (blind_dir / "shot-01.png").read_bytes() == self.PNG
+        # Pass 2 gets each copy's origin: the URL for an attachment, the
+        # repository path for a committed file.
+        assert shot_map.splitlines() == [
+            f"shot-01.png\t{png}",
+            f"shot-02.jpg\t{jpeg}",
+            f"shot-03.gif\t{gif}",
+            "shot-04.png\ttemp-screenshots/f/pinned-turn-chip.png",
+        ]
+        assert clip_list.splitlines() == [webm, gif]
+        assert "screens=true" in output
+        # Skips are logged, per URL, and the step still succeeded.
+        assert f"SKIPPED (mime text/plain): {text}" in self._evidence_stdout
+        assert f"SKIPPED (download failed): {gone}" in self._evidence_stdout
+        assert "6 attachment URL(s) matched the allowlist, 6 download(s) attempted" in (
+            self._evidence_stdout
+        )
+        # Only the allowlisted hosts were contacted, each URL once, in body
+        # order -- the look-alike host and the foreign repository never were.
+        calls = self._curl_calls()
+        assert [call[-1] for call in calls] == [png, jpeg, webm, text, gone, gif]
+        for call in calls:
+            joined = " ".join(call)
+            assert "-H" not in call and "--header" not in call, joined
+            assert "authorization" not in joined.lower(), joined
+            assert "-o" in call and "--proto" in call and "=https" in call, joined
+            assert "--max-filesize" in call and "104857600" in call, joined
+
+    def test_description_recordings_are_capped_and_never_count_as_screens(
+        self, tmp_path: Path
+    ) -> None:
+        """Videos are listed, not opened, so the cap on them only bounds the
+        downloads -- and a description carrying only videos leaves the blind
+        reader with nothing to look at, so it must not turn the blind pass on."""
+        repo, base = self._code_only_ui_repo(tmp_path)
+        cap = int(_step_env("ux-review.yml", UX_EVIDENCE_STEP)["MAX_CLIPS"])
+        urls = [
+            f"https://github.com/user-attachments/assets/0f3b2c1a-{i:04d}-4bcd-9e8f-0123456789ab"
+            for i in range(cap + 1)
+        ]
+        shot_list, shot_map, clip_list, output, blind_dir = self._run_evidence_gate(
+            repo,
+            base,
+            tmp_path,
+            body="".join(f"{url}\n\n" for url in urls),
+            fixtures={url: self.WEBM for url in urls},
+        )
+        assert clip_list.splitlines() == urls[:cap] + [
+            f"TRUNCATED: more than {cap} recordings in the PR description; one was not listed"
+        ]
+        assert shot_list == "" and shot_map == ""
+        assert list(blind_dir.iterdir()) == []
+        assert "screens=false" in output
+
+    def test_description_images_share_the_committed_cap_and_downloads_are_bounded(
+        self, tmp_path: Path
+    ) -> None:
+        """MAX_SHOTS is one cap for both sources -- past it an image is written
+        into the lists as TRUNCATED so pass 2 knows its evidence is partial --
+        and once both caps are spent the step stops downloading altogether, so
+        a description cannot keep the job fetching."""
+        repo, base = self._code_only_ui_repo(tmp_path)
+        urls = [
+            f"https://github.com/user-attachments/assets/0f3b2c1a-{i:04d}-4bcd-9e8f-0123456789ab"
+            for i in range(3)
+        ]
+        shot_list, shot_map, clip_list, output, blind_dir = self._run_evidence_gate(
+            repo,
+            base,
+            tmp_path,
+            body="".join(f"![shot]({url})\n" for url in urls),
+            fixtures={url: self.PNG for url in urls},
+            max_shots="1",
+            max_clips="1",
+        )
+        assert shot_list.splitlines() == [
+            f"{blind_dir.as_posix()}/shot-01.png",
+            "TRUNCATED: more than 1 images; one was not listed",
+        ]
+        assert shot_map.splitlines() == [f"shot-01.png\t{urls[0]}", f"TRUNCATED\t{urls[1]}"]
+        assert clip_list == ""
+        assert "screens=true" in output
+        # Two caps of one each bound the downloads at two; the third URL is
+        # named in the log as not fetched and curl never saw it.
+        assert [call[-1] for call in self._curl_calls()] == urls[:2]
+        assert f"not fetched: {urls[2]}" in self._evidence_stdout
+
+    def test_the_pr_description_reaches_the_evidence_step_only_as_grep_input(self) -> None:
+        """The description is author-controlled text. It enters the step as an
+        environment value (never spliced into the script by an expression) and
+        the script reads it exactly once, as a here-string into grep -- never
+        as a pattern, an argument or a command word -- so nothing it says can
+        change what the step runs. The URLs grep returns are the only thing
+        fetched, from GitHub's own asset hosts and no other, with no
+        credential on the request."""
+        env = _step_env("ux-review.yml", UX_EVIDENCE_STEP)
+        assert env["BODY"] == "${{ github.event.pull_request.body }}"
+        assert env["REPO"] == "${{ github.repository }}"
+        assert env["MAX_CLIPS"] == "4"
+        script = _step_script(_workflow("ux-review.yml"), UX_EVIDENCE_STEP)
+        code = [ln for ln in script.splitlines() if not ln.lstrip().startswith("#")]
+        body_lines = [ln for ln in code if "$BODY" in ln or "${BODY" in ln]
+        assert len(body_lines) == 1, body_lines
+        assert re.search(r'grep -oE "\$allow" <<< "\$BODY"', body_lines[0]), body_lines[0]
+        self._assert_attachment_fetch_is_allowlisted_and_anonymous(script)
+
+    def test_the_fork_lane_fetches_attachments_from_the_api_body_with_the_same_guards(
+        self,
+    ) -> None:
+        """The fork lane runs under pull_request_target with secrets, so its
+        step reads the description from the API (the event payload can lag an
+        edit) into one variable, hands that variable to grep as a here-string
+        and nothing else, and downloads only allowlisted GitHub asset URLs with
+        the same anonymous, size-capped curl as the same-repo lane. The step is
+        gated on the UI-scope pass, and the egress allowlist the job already
+        carries admits exactly the two hosts a download touches."""
+        step = _step("fork-ux-review.yml", FORK_ATTACHMENT_STEP)
+        assert step["if"] == "steps.scope.outputs.ui == 'true'"
+        env = _step_env("fork-ux-review.yml", FORK_ATTACHMENT_STEP)
+        assert env["REPO"] == "${{ github.repository }}"
+        assert env["PR"] == "${{ steps.pr.outputs.pr }}"
+        assert env["MAX_SHOTS"] == "40"
+        assert env["MAX_CLIPS"] == "4"
+        assert "BODY" not in env, "the fork lane reads the body from the API, not the event"
+        script = _step_script(_workflow("fork-ux-review.yml"), FORK_ATTACHMENT_STEP)
+        code = [ln for ln in script.splitlines() if not ln.lstrip().startswith("#")]
+        body_lines = [ln for ln in code if "$body" in ln or "${body" in ln]
+        assert any(
+            ln.strip() == 'body="$(gh api "repos/$REPO/pulls/$PR" --jq \'.body // ""\')"'
+            for ln in code
+        ), "the fork lane reads the description from the API into one variable"
+        assert len(body_lines) == 1, body_lines
+        assert re.search(r'grep -oE "\$allow" <<< "\$body"', body_lines[0]), body_lines[0]
+        self._assert_attachment_fetch_is_allowlisted_and_anonymous(script)
+        # Downloads land under runner.temp and the reviewer is told where.
+        assert 'mv -- "$tmp" "$ATTACH_DIR/$name"' in script
+        system = _line_containing(
+            _step("fork-ux-review.yml", UX_REVIEW_STEP)["with"]["claude_args"],
+            "--append-system-prompt",
+        )
+        for data_file in ("ux-attachments.txt", "ux-attachment-map.txt", "ux-recordings.txt"):
+            assert data_file in system, data_file
+        endpoints = _flat(
+            _step("fork-ux-review.yml", "Harden runner (egress allowlist)")["with"][
+                "allowed-endpoints"
+            ]
+        )
+        assert "github.com:443" in endpoints
+        assert "objects.githubusercontent.com:443" in endpoints
+
+    @staticmethod
+    def _assert_attachment_fetch_is_allowlisted_and_anonymous(script: str) -> None:
+        code = [ln for ln in script.splitlines() if not ln.lstrip().startswith("#")]
+        # The allowlist is exactly GitHub's three asset URL shapes; the
+        # repository-scoped one is built from the escaped repository name.
+        allow = [ln.strip() for ln in code if ln.strip().startswith("allow=")]
+        assert allow == [
+            'allow="https://github\\.com/user-attachments/assets/[0-9A-Za-z-]+"',
+            'allow="$allow|https://github\\.com/$repo_re/assets/[0-9]+/[0-9A-Za-z-]+"',
+            'allow="$allow|https://user-images\\.githubusercontent\\.com/[0-9]+/[0-9A-Za-z._-]+"',
+        ]
+        assert 'repo_re="$(printf \'%s\' "$REPO" | sed' in script
+        curl = [ln for ln in code if re.search(r"\bcurl\b", ln)]
+        assert len(curl) == 1, curl
+        for forbidden in ("-H ", "--header", "Authorization", "GH_TOKEN", "GITHUB_TOKEN"):
+            assert forbidden not in curl[0], curl[0]
+        for flag in (
+            "-sSfL",
+            "--proto '=https'",
+            "--max-redirs 5",
+            "--max-time 60",
+            "--max-filesize 104857600",
+            '-o "$tmp" "$url"',
+        ):
+            assert flag in curl[0], curl[0]
+        # Failure is logged and skipped, never fatal; the type is the bytes'.
+        assert "SKIPPED (download failed)" in script
+        assert 'mime="$(file --mime-type -b -- "$tmp")"' in script
+        assert "SKIPPED (mime $mime)" in script
+
+    def test_both_lanes_name_the_description_as_the_normal_home_for_evidence(self) -> None:
+        """A PR carrying its screenshots as description attachments is the
+        normal case; a committed file still counts. Pass 2 is told so, the
+        not-performed report names both sources, and the fork lane is told the
+        workflow downloaded the attachments for it rather than asked only for
+        committed files."""
+        script = _step_script(_workflow("ux-review.yml"), UX_CAPTURE_STEP)
+        assert (
+            "BLIND READ NOT PERFORMED: the PR description carries no image attachment "
+            "and this revision commits no image under temp-screenshots/ or .github/screenshots/"
+        ) in script
+        prompt = _flat(_step("ux-review.yml", UX_REVIEW_STEP)["with"]["prompt"])
+        assert "The normal source is an image attached to the PR description" in prompt
+        assert (
+            "an image committed under temp-screenshots/ or .github/screenshots/ still counts"
+            in prompt
+        )
+        assert "at least one screenshot the PR supplies" in prompt
+        assert "The recording list in your system prompt carries every one the PR supplies" in (
+            prompt
+        )
+        system = _line_containing(
+            _step("ux-review.yml", UX_REVIEW_STEP)["with"]["claude_args"], "--append-system-prompt"
+        )
+        assert "the attachment URL in the PR description, or the repository path" in system
+        fork_prompt = _flat(_step("fork-ux-review.yml", UX_REVIEW_STEP)["with"]["prompt"])
+        assert "the normal evidence is an image or video attached to the PR description" in (
+            fork_prompt
+        )
+        assert "The workflow downloads each one for you" in fork_prompt
+        assert "A committed image still counts" in fork_prompt
+        assert "at least one screenshot the PR supplies" in fork_prompt
 
 
 ADVISORY_LANES = {

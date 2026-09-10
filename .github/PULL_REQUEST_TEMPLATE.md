@@ -43,11 +43,15 @@
      - Prefer a short video/GIF when the change involves motion or a multi-step
        flow (animations, transitions, interactions) — a still image cannot
        prove those.
-     - Commit media to the PR branch under a top-level, ephemeral, never-packaged
-       dir `temp-screenshots/<feature>/` (never under docs/ or src/kiro_crew/**)
-       and embed with commit-SHA-pinned URLs so they survive branch deletion on
-       merge and periodic cleanup:
-       ![alt](https://github.com/<owner>/<repo>/raw/<sha>/temp-screenshots/<feature>/<name>.png)
+     - Upload media as GitHub attachments; do not commit it to the repository.
+       Write ordinary local paths in this section and pass the same files to
+       `gh pr create|edit --attach <path>` (gh >= 2.99): each path is rewritten
+       in place to a permanent https://github.com/user-attachments/assets/...
+       URL that survives force-pushes, branch deletion and merge. Dragging the
+       file into this box in the web UI produces the same URL.
+         ![alt](./evidence/after.png)
+         ![](./evidence/demo.mp4)   <- alone in its paragraph renders as a player
+       Limits: 10 MB per image/GIF, 100 MB per video.
      - Put the two or three most telling shots inline; fold full-page context
        into a <details> block. -->
 
