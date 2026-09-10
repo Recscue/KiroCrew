@@ -48,6 +48,126 @@ Rules the catalog enforces, each of which drops the entry with a logged warning 
 
 Place the clip and its poster in `website/public/app-assets/feature-videos/`.
 
+## Publishing a Release of Videos
+
+The shipped runtime plays the clips bundled with it, described above. A hosted
+release is the other half: `scripts/feature-videos/publish.py` builds the signed
+folder a CDN serves, and the runtime side that fetches it is a separate change.
+Until that lands, publishing a release folder is a no-op for a running dashboard
+— build and verify one, but nothing reads it yet.
+
+Clips ship as a signed release folder. One command builds it, a second checks
+it, and a human uploads it. Neither command touches the network, so the
+credentials that can write to a public origin stay with the person who owns
+them.
+
+Put the media and a `catalog.json` in one directory. Each entry needs an
+`<id>.mp4` and an `<id>.jpg` beside it, both named after the entry's `id`.
+
+```json
+{
+  "entries": [
+    {
+      "id": "monitor-loops",
+      "feature": "monitor-loops",
+      "title": "Let one session watch a pull request",
+      "description": "One or two plain sentences on what the feature does.",
+      "doc": "monitor-loops.md",
+      "used_when": ["sel_event_seen:monitor_start"],
+      "min_version": "",
+      "duration_s": 22.0
+    }
+  ]
+}
+```
+
+`duration_s` is optional when ffprobe is installed; without it, set the value or
+publishing stops.
+
+### Produce
+
+```bash
+python3 scripts/feature-videos/publish.py \
+  --input ~/feature-videos-input \
+  --cdn-host videos.example.com \
+  --kms-key-arn "$RELEASE_SIGNING_KEY_ARN"
+```
+
+That writes `dist/feature-videos/<release>/` holding the media, a signed
+`manifest.json` and a `SHA256SUMS`. `--release` defaults to the version in
+`pyproject.toml`.
+
+The manifest is signed with the same offline key `cli.sh` pins for the CLI
+artifact manifest, so a release carries one trust root rather than two.
+
+Keys are separated by purpose. A production release is signed with
+`--kms-key-arn`: the private half is a non-exportable AWS KMS key held by the
+release workflow, no human can read it, and the tool checks the KMS key's public
+half against the committed one before it signs. The manifest then records
+`key_id` as a hint about which pinned key was used.
+
+`--signing-key <path>` signs with a local private key for staging and for tests.
+It omits `key_id`, because that field names a pinned key and a staging key is not
+one, and it prints a warning that the folder is not a release. The dashboard
+verifies against the pinned key either way, so a staging folder is a staging
+folder no matter where it is uploaded.
+
+`signature` is base64 at the top level of the manifest and covers canonical JSON
+of every other top-level field, nested values included. Editing one byte of the
+manifest breaks it.
+
+The canonical-JSON rule lives in the tool rather than being imported from the
+runtime: publishing has to work from a bare checkout, and a build tool must not
+execute the code it produces input for. A test signs with the tool's rule and
+verifies with the runtime's own verifier, so the two cannot drift apart
+unnoticed.
+
+What publishing refuses, each with its reason on stderr:
+
+| Refused | Why |
+|---------|-----|
+| An `id` that is not a lowercase hyphenated slug | The id becomes the asset basename and the display-state key. |
+| A missing `<id>.mp4` or `<id>.jpg` | A release folder with a hole in it is not publishable. |
+| A `doc` outside `src/kiro_crew/tips_allowlist.py` | The allowlist tips use, so a clip cannot point at an internal design note. |
+| A file over the cap, 25 MB by default and set by `--max-bytes` | Every dashboard that has not seen a clip fetches it once. |
+| Video that is not H.264, or an audio track that is not AAC | Checked with ffprobe when it is installed, skipped with a warning when it is not. A silent clip passes. |
+| A duration nobody knows | Set `duration_s`, or install ffprobe. |
+| A signed payload over 64 KiB (`--max-payload-bytes`) | A publishing limit under what the runtime accepts, so a release keeps headroom. |
+| A `manifest.json` over 256 KiB (`--max-document-bytes`) | Same idea for the published file, which is indented and so larger than the signed bytes. |
+| More than 500 entries (`--max-entries`) | The runtime refuses an over-long list whole rather than reading the first few. |
+
+### Verify
+
+```bash
+python3 scripts/feature-videos/verify.py dist/feature-videos/0.7.0
+```
+
+This recomputes every hash from the bytes on disk, verifies the signature
+against the committed release key, and refuses a folder carrying a file nobody
+signed. It only reads. Run it before every upload.
+
+Pass `--public-key <pem>` to check a folder signed with a staging key.
+
+### Upload
+
+Publishing prints the commands and stops. Run them yourself:
+
+```bash
+aws s3 sync --dryrun dist/feature-videos/0.7.0/ s3://BUCKET/feature-videos/0.7.0/
+aws s3 sync dist/feature-videos/0.7.0/ s3://BUCKET/feature-videos/0.7.0/
+aws cloudfront create-invalidation --distribution-id DISTRIBUTION \
+  --paths '/feature-videos/0.7.0/*'
+```
+
+A release folder is immutable. Changing a clip means cutting a new release, not
+overwriting a published one. The invalidation is for `manifest.json`, the one
+file a consumer re-reads.
+
+Every size refusal exits non-zero and leaves no folder behind, so the failure
+lands while a person is watching. These ceilings are this tool's own and each sits
+under the runtime's; `scripts/feature-videos/README.md` lists both columns. Raise
+a flag when a release genuinely needs the headroom.
+
 ## Declaring a `used_when` Signal
 
 `used_when` names deterministic probes. Any one of them firing withdraws the video, because an intro for a feature already in use is worse than no intro. A probe that raises, or a signal nobody registered, counts as "not used" — the clip still plays, and the reason is logged.
