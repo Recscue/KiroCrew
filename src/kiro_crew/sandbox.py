@@ -3828,6 +3828,11 @@ def _ssh_supports_accept_new() -> bool:
     return False
 
 
+#: Connect fence (issue 9806) build-time literal cache: (prog, nr, self, ports)
+#: reprs, computed once per process by ``_build_launcher_script``.
+_FENCE_BUILD_CACHE: tuple[str, str, str, str] | None = None
+
+
 def _build_launcher_script(
     sandbox_level: str = "strict",
     *,
@@ -3854,6 +3859,30 @@ def _build_launcher_script(
     home = str(Path.home())
     uid = os.getuid()
     gid = os.getgid()
+    # Connect fence (issue 9806) build-time inputs: BPF program + seccomp(2)
+    # number are arch-baked (build host == run host for a launcher); the
+    # self-address sweep is cached at module level so the per-spawn cost on
+    # the event loop is one global read after the first spawn.
+    global _FENCE_BUILD_CACHE
+    _fence_cache = _FENCE_BUILD_CACHE
+    if _fence_cache is None:
+        from .security import connect_fence as _cf
+
+        _machine = os.uname().machine
+        try:
+            _fence_prog_val: bytes | None = _cf.build_connect_notif_prog(_machine)
+            _fence_nr_val: int | None = _cf.seccomp_syscall_nr(_machine)
+        except _cf.FenceUnsupportedArch:
+            _fence_prog_val = None
+            _fence_nr_val = None
+        _fence_cache = (
+            repr(_fence_prog_val),
+            repr(_fence_nr_val),
+            repr(tuple(sorted(_cf.fence_self_addresses()))),
+            repr(tuple(sorted(_cf.FENCE_PORTS))),
+        )
+        _FENCE_BUILD_CACHE = _fence_cache
+    _fence_prog_lit, _fence_nr_lit, _fence_self_lit, _fence_ports_lit = _fence_cache
     # Source the sensitive-dir lists from the active PlatformContext so the
     # The internal companion can extend them (+ .midway/.ada).  The Default adapter
     # returns ``list(_STRICT_DIRS)`` / ``list(_CC_DIRS)``, so standalone is
@@ -4204,6 +4233,15 @@ def main():
     c2p_r, c2p_w = os.pipe()  # child signals "unshare done"
     p2c_r, p2c_w = os.pipe()  # parent signals "maps written"
 
+    # Connect fence (issue 9806): notify-fd handoff channel. The child
+    # installs the filter and sends the fd; the parent supervises verdicts.
+    import socket as _fence_socket
+    _FENCE_PROG = {_fence_prog_lit}
+    _FENCE_NR = {_fence_nr_lit}
+    _FENCE_SELF = {_fence_self_lit}
+    _FENCE_PORTS = {_fence_ports_lit}
+    _fence_psock, _fence_csock = _fence_socket.socketpair()
+
     pid = os.fork()
 
     if pid > 0:
@@ -4220,6 +4258,80 @@ def main():
             f.write(f"{{REAL_GID}} {{REAL_GID}} 1\\n")
         os.write(p2c_w, b"x")  # signal child to proceed
         os.close(p2c_w)
+        # Connect fence (issue 9806): receive the notify fd; supervise.
+        _fence_csock.close()
+        _fence_nfd = -1
+        try:
+            _fence_psock.settimeout(5.0)
+            _fmsg, _ffds, _fflags, _faddr = _fence_socket.recv_fds(_fence_psock, 16, 1)
+            if _ffds:
+                _fence_nfd = _ffds[0]
+        except OSError:
+            pass
+        finally:
+            _fence_psock.close()
+        if _fence_nfd >= 0:
+            import fcntl as _fence_fcntl
+            import ipaddress as _fence_ip
+            import threading as _fence_threading
+
+            def _fence_denied(raw):
+                if raw is None or len(raw) < 8:
+                    return None
+                _fam = struct.unpack_from("<H", raw, 0)[0]
+                if _fam == _fence_socket.AF_INET:
+                    _fport = struct.unpack_from("!H", raw, 2)[0]
+                    _fip = _fence_ip.ip_address(raw[4:8])
+                elif _fam == _fence_socket.AF_INET6 and len(raw) >= 24:
+                    _fport = struct.unpack_from("!H", raw, 2)[0]
+                    _fip = _fence_ip.ip_address(raw[8:24])
+                else:
+                    return None
+                if _fport not in _FENCE_PORTS:
+                    return None
+                if getattr(_fip, "ipv4_mapped", None) is not None:
+                    _fip = _fip.ipv4_mapped
+                if _fip.is_loopback or str(_fip) in _FENCE_SELF:
+                    return (str(_fip), _fport)
+                return None
+
+            def _fence_loop():
+                while True:
+                    _nbuf = bytearray(80)
+                    try:
+                        _fence_fcntl.ioctl(_fence_nfd, 0xC0502100, _nbuf)
+                    except InterruptedError:
+                        continue
+                    except OSError:
+                        return
+                    _nid, _npid = struct.unpack_from("<QI", _nbuf, 0)
+                    _nargs = struct.unpack_from("<6Q", _nbuf, 32)
+                    _raw = None
+                    try:
+                        _mfd = os.open("/proc/" + str(_npid) + "/mem", os.O_RDONLY)
+                        try:
+                            _raw = os.pread(_mfd, min(_nargs[2], 128), _nargs[1])
+                        finally:
+                            os.close(_mfd)
+                    except OSError:
+                        _raw = None
+                    _hit = _fence_denied(_raw)
+                    if _hit is not None:
+                        try:
+                            _fence_fcntl.ioctl(_fence_nfd, 0x40082102, struct.pack("<Q", _nid))
+                        except OSError:
+                            continue
+                        print("sandbox: connect-fence DENIED " + _hit[0] + ":" + str(_hit[1]),
+                              file=sys.stderr)
+                        _resp = struct.pack("<QqiI", _nid, 0, -1, 0)
+                    else:
+                        _resp = struct.pack("<QqiI", _nid, 0, 0, 1)
+                    try:
+                        _fence_fcntl.ioctl(_fence_nfd, 0xC0182101, _resp)
+                    except OSError:
+                        pass
+
+            _fence_threading.Thread(target=_fence_loop, daemon=True).start()
         _, status = os.waitpid(pid, 0)
         code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
         sys.exit(code)
@@ -4726,6 +4838,28 @@ def main():
                                    ctypes.addressof(_fprog), 0, 0)
                 if _ret != 0:
                     sys.exit("sandbox: BLOCKED — failed to install seccomp-BPF filter (prctl returned %d)" % _ret)
+
+        # Connect fence (issue 9806): install the notif filter, send the fd.
+        _fence_psock.close()
+        _fence_installed = False
+        if _FENCE_PROG is not None and _FENCE_NR is not None:
+            class _FenceProg(ctypes.Structure):
+                _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.c_char_p)]
+            _fprog_fence = _FenceProg()
+            _fprog_fence.len = len(_FENCE_PROG) // 8
+            _fprog_fence.filter = _FENCE_PROG
+            _fence_fd = _libc.syscall(_FENCE_NR, 1, 8, ctypes.addressof(_fprog_fence))
+            if _fence_fd >= 0:
+                try:
+                    _fence_socket.send_fds(_fence_csock, [b"f"], [_fence_fd])
+                    _fence_installed = True
+                except OSError:
+                    pass
+                os.close(_fence_fd)
+        if not _fence_installed:
+            print("sandbox: connect fence unavailable on this kernel; "
+                  "command-line tier remains the interim cover", file=sys.stderr)
+        _fence_csock.close()
 
         # ── Step 7: Pre-exec hardlink scan ──
         # Scan the agent workspace + /tmp for hardlinks (nlink > 1) whose
