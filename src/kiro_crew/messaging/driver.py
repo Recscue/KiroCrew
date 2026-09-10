@@ -23,6 +23,7 @@ import re
 from typing import Any, Awaitable, Callable
 
 from kiro_crew import name_grant, session_directive
+from kiro_crew.acp.tool_call_title import derive_tool_call_title
 from kiro_crew.acp.types import (
     EVENT_COMPACTION_STATUS,
     EVENT_COMPLETE,
@@ -526,11 +527,30 @@ class TurnDriver:
                 _purpose = _redact(getattr(event, "tool_purpose", ""))
                 if event.tool_call_id and _purpose:
                     tool_purposes[str(event.tool_call_id)] = _purpose
+                # The channel's task label is the same argument-derived title
+                # the dashboard row shows (acp/tool_call_title mirrors
+                # website/src/utils/toolCallTitle.ts): `List files in src`
+                # rather than the literal command, `Session send: <target>`
+                # rather than `@server/tool`. When nothing better can be said
+                # it is the raw command cut to ~80 chars; the approval prompt
+                # below still carries the verbatim ``tool_input``.
+                _derived = derive_tool_call_title(
+                    title=event.title or "",
+                    kind=getattr(event, "tool_kind", "") or "",
+                    raw_input=(
+                        getattr(event, "raw_tool_params", None)
+                        or getattr(event, "tool_input", "")
+                        or ""
+                    ),
+                    is_shell=bool(getattr(event, "is_shell", False)),
+                    tool_name=getattr(event, "tool_name", "") or "",
+                    mcp_server=getattr(event, "mcp_server_name", "") or "",
+                )
                 await self.renderer.dispatch(
                     OutputEvent(
                         kind=TOOL_CALL,
                         tool_call_id=event.tool_call_id,
-                        title=_redact(event.title),
+                        title=_redact(_derived.title or event.title),
                         tool_kind=getattr(event, "tool_kind", ""),
                         tool_purpose=_purpose,
                     )
