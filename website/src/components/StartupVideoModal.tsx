@@ -4,6 +4,7 @@ import { motion, useReducedMotion } from 'framer-motion'
 import { Share2, X } from 'lucide-react'
 
 import { api, type FeatureVideo, type FeatureVideoNext } from '../api/client'
+import { Badge } from './ui'
 import { useDialogFocusTrap } from '../hooks/useDialogFocusTrap'
 import { tipDocHref } from '../utils/docsLink'
 import { i18nT } from '../i18n/t'
@@ -25,24 +26,41 @@ import { markStartupVideoHandled } from './startupVideoGate'
  * offering a clip after either — so there is no "remind me" affordance here to
  * imply otherwise.
  *
- * The clip's BYTES are not fetched until the user asks for them: `preload="none"`
- * plus a `poster` means the browser draws the still and waits for a play. A
+ * The clip's BYTES are not fetched until the user asks for them: a `poster` plus
+ * `preload="none"` means the browser draws the still and waits for a play. A
  * launch that shows no video (the overwhelming majority) costs one small JSON
- * response and no media at all.
+ * response and no media at all. A clip that is still on the CDN uses
+ * `preload="metadata"` instead -- a streamed source needs its header read before
+ * the controls can show a duration or seek anywhere -- and says so on the card,
+ * because for that clip pressing play spends network the user has not been asked
+ * about.
  *
- * The one launch that WOULD show a video pays one more small request first: a
- * same-origin HEAD on the clip. The backend already refuses to offer a clip whose
- * file it cannot see on disk -- that is the primary defence -- and this probe is
- * the belt to those braces, for the file that vanishes or the static route that
- * breaks between the catalog check and the render. Under `preload="none"` the
- * player's own `onError` cannot fire until the user presses play, so without the
- * probe an unreachable clip opens a dialog with a still that plays nothing.
+ * The one launch that WOULD show a video pays one more small request first, and it
+ * goes to the SERVER: `GET /api/feature-videos/probe`. A client-side HEAD used to
+ * do this job and cannot any more -- a CDN clip is cross-origin, where the browser
+ * refuses a HEAD for want of CORS headers and reports a healthy clip as missing.
+ * The server has no such limit and is also the side that knows whether the release
+ * folder holds the file. The catalog check is still the primary defence; this is
+ * the belt to those braces, for the file that vanishes between the catalog check
+ * and the render. Without it an unreachable clip opens a dialog with a still that
+ * plays nothing, because under `preload="none"` the player's own `onError` cannot
+ * fire until the user presses play.
  */
 
 const LazyShareMessageModal = lazy(() => import('../pages/chat/share/ShareMessageModal'))
 
 /** Fraction of the clip that counts as watched. */
 const SEEN_AT = 0.8
+
+/**
+ * Journal classifications for the two ways the pre-open probe ends badly. They go
+ * in `code` rather than `detail` because they are a fixed classification, which is
+ * that field's purpose -- `detail` carries whatever the browser said.
+ */
+/** The server looked and the clip is not reachable. */
+const PROBE_NOT_OK = 'probe_not_ok'
+/** The probe could not be asked at all (no such route, or the network). */
+const PROBE_FAILED = 'probe_failed'
 
 export interface StartupVideoModalProps {
   /**
@@ -84,15 +102,35 @@ export default function StartupVideoModal({ shareEnabled = false, onClose }: Sta
   })
 
   const video = data?.video ?? null
-  const offered = !isError && !!video && data?.enabled === true
+  /**
+   * A clip whose bytes are on the CDN, so playing it spends network.
+   *
+   * Read from the field rather than sniffed off `src`: a URL's shape is a
+   * coincidence of where the file happens to live, while `source` is the
+   * backend's own statement, and it is what makes the two different offers
+   * distinguishable without parsing anything.
+   */
+  const remote = video?.source === 'remote'
+  /**
+   * Fail closed on the remote offer. A remote clip is only playable if this
+   * install may pull bytes at all, so with downloads off it is not offered --
+   * `=== true` and not `!== false`, because an absent answer (an older gateway,
+   * a failed read) must not read as permission.
+   *
+   * The backend is not supposed to send this combination. That is exactly why the
+   * check is here: the one thing worse than no dialog is a dialog around a player
+   * that can never fill, and the client is the side that would be holding it.
+   */
+  const remoteBlocked = remote && data?.download_enabled !== true
+  const offered = !isError && !!video && data?.enabled === true && !remoteBlocked
 
   /**
    * Is the clip actually THERE? `'idle'` until the gate says the dialog would
-   * open, then one same-origin HEAD on `video.src` decides `'ok'` or `'failed'`.
+   * open, then one `GET /api/feature-videos/probe` decides `'ok'` or `'failed'`.
    *
-   * The dialog renders on `'ok'` only. `'failed'` closes without a verdict, the
-   * same contract as `onMediaError` below: a 404 on the clip is not the user
-   * deciding anything about it, and `dismissed` is permanent.
+   * The dialog renders on `'ok'` only. Anything else closes without a verdict,
+   * the same contract as `onMediaError` below: an unreachable clip is not the
+   * user deciding anything about it, and `dismissed` is permanent.
    *
    * ONE probe per mount, held in a ref rather than derived from state, so the
    * effect cannot re-issue it on a re-render -- and, under StrictMode's doubled
@@ -101,11 +139,9 @@ export default function StartupVideoModal({ shareEnabled = false, onClose }: Sta
    * doubled run's cleanup would otherwise drop the only result that will ever
    * come, and the modal would sit at `'idle'` forever.
    *
-   * `credentials: 'same-origin'` is what the `<video>` element itself would send
-   * for a same-origin `src`, so the probe sees the same answer the player would.
-   * `src` is same-origin by contract -- the backend's validator only ever names a
-   * path under `/app-assets/feature-videos/` -- and this probe relies on that
-   * rather than relaxing it.
+   * The question is asked of the server and not of the asset, which is the whole
+   * reason this route exists: only one of the two possible sources is
+   * same-origin, so no request the PAGE can make answers it for both.
    */
   const [probe, setProbe] = useState<'idle' | 'ok' | 'failed'>('idle')
   const probeStarted = useRef(false)
@@ -114,21 +150,25 @@ export default function StartupVideoModal({ shareEnabled = false, onClose }: Sta
    * The clip is not reachable. Journal it and close, exactly as `onMediaError`
    * does for a mid-playback failure -- same `source`, same message, same
    * endpoint -- so a reader of the error journal sees one story for "the clip
-   * did not load" with the HTTP status (or the network reason) telling which
-   * half it came from. No verdict of either kind: the clip is offered again next
-   * launch, once its file is back.
+   * did not load", with `code` telling which half it came from. No verdict of
+   * either kind: the clip is offered again next launch, once its file is back.
+   *
+   * `endpoint` names the CLIP, not the probe route. The route worked; what the
+   * reader of the journal needs is which asset is missing.
    *
    * `markStartupVideoHandled` is what the App calls when it mounts this modal,
    * and it is idempotent, so for the normal path this is a no-op. It is here so
    * that ANY host of this component -- not only the App gate -- spends the launch
    * on a failed probe rather than letting a re-mount retry it.
    */
-  const failProbe = useCallback((src: string, status: number | undefined, detail: string | undefined) => {
+  const failProbe = useCallback((src: string, code: string, detail: string | undefined) => {
     recordError({
       source: 'api',
       message: i18nT('components.startupVideoModal.media_failed'),
       endpoint: src,
-      status,
+      // No HTTP status: the probe route answered fine, and what failed is the
+      // asset behind it. `code` says which of the two ways it failed.
+      code,
       detail,
     })
     markStartupVideoHandled()
@@ -140,16 +180,21 @@ export default function StartupVideoModal({ shareEnabled = false, onClose }: Sta
     if (!offered || !video || probeStarted.current) return
     probeStarted.current = true
     const src = video.src
-    fetch(src, { method: 'HEAD', credentials: 'same-origin' }).then(
+    api.featureVideoProbe(video.id, sessionKey).then(
       res => {
-        if (res.ok) setProbe('ok')
-        else failProbe(src, res.status, undefined)
+        if (res?.ok) setProbe('ok')
+        // The server looked and the clip is not there. Nothing more to say than
+        // that, so no `detail` is invented for it.
+        else failProbe(src, PROBE_NOT_OK, undefined)
       },
       (err: unknown) => {
-        failProbe(src, undefined, err instanceof Error ? err.message : undefined)
+        // The probe itself could not be asked -- an older gateway without the
+        // route, or the network. Treated the same way as "not there", because an
+        // unanswerable question is not permission to open a player.
+        failProbe(src, PROBE_FAILED, err instanceof Error ? err.message : undefined)
       },
     )
-  }, [offered, video, failProbe])
+  }, [offered, video, sessionKey, failProbe])
 
   // Nothing is on screen until there is a clip AND the feature is on AND the
   // probe has seen the clip, so the dialog itself lives in its own component
@@ -163,6 +208,7 @@ export default function StartupVideoModal({ shareEnabled = false, onClose }: Sta
   return (
     <OpenStartupVideoModal
       video={video}
+      remote={remote}
       shareEnabled={shareEnabled}
       onClose={onClose}
       sessionKey={sessionKey}
@@ -171,8 +217,11 @@ export default function StartupVideoModal({ shareEnabled = false, onClose }: Sta
 }
 
 /** The dialog itself. Mounted only while there is a clip to show. */
-function OpenStartupVideoModal({ video, shareEnabled, onClose, sessionKey }: {
+function OpenStartupVideoModal({ video, remote, shareEnabled, onClose, sessionKey }: {
   video: FeatureVideo
+  /** The clip streams from the CDN rather than playing off this machine. Changes
+   *  what the player preloads and puts a hint on the card; nothing else. */
+  remote: boolean
   shareEnabled: boolean
   onClose: () => void
   sessionKey: string | undefined
@@ -359,16 +408,37 @@ function OpenStartupVideoModal({ video, shareEnabled, onClose, sessionKey }: {
           aria-label={video.title}
           controls
           playsInline
-          // No autoplay and no preload: the bytes arrive when the user asks for
-          // them, so an unwatched clip costs nothing beyond the poster.
-          preload="none"
+          // Never autoplay: the bytes arrive when the user asks for them, so an
+          // unwatched clip costs nothing beyond the poster.
+          //
+          // A cached clip preloads NOTHING -- it is a local file and the controls
+          // read its duration the moment play starts. A streamed one preloads its
+          // METADATA, because without the header the player shows no duration and
+          // the seek bar cannot be dragged; that is a few kilobytes, not the clip,
+          // and it is the difference between working controls and a dead strip.
+          preload={remote ? 'metadata' : 'none'}
           onTimeUpdate={onTimeUpdate}
           onEnded={() => settle('seen')}
           onError={onMediaError}
         />
 
         <div className="px-4 py-3 text-sm text-text">
-          <p id={titleId} className="font-semibold text-text-strong">{video.title}</p>
+          <p id={titleId} className="font-semibold text-text-strong flex items-center gap-2">
+            {video.title}
+            {/* Says where the bytes come from, next to the thing they belong to.
+                It is information, not a control: pressing play on a streamed clip
+                spends network, and the user is owed that before they press it
+                rather than after. Absent entirely for a cached clip -- there is
+                nothing to disclose. */}
+            {remote && (
+              // `font-sans` overrides the badge's default mono face. Mono is for
+              // an identifier; this is a word, and in mono next to a sans title it
+              // read as a code chip rather than a status.
+              <Badge variant="muted" className="font-sans" data-testid="startup-video-streaming">
+                {i18nT('components.startupVideoModal.streaming')}
+              </Badge>
+            )}
+          </p>
           <p id={descId} className="mt-1 text-[13px] text-muted">{video.description}</p>
         </div>
 
