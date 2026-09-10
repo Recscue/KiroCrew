@@ -2,6 +2,8 @@ import { useRef, useEffect } from 'react'
 import { Check } from 'lucide-react'
 
 import { isPricedMultiplier } from '../providers/modelList'
+import { useModelOrderLoadFailed } from '../hooks/useAvailableModels'
+import ErrorNotice from './ErrorNotice'
 import type { ModelInfo } from '../providers/types'
 import { fmtNumber } from '../i18n/format'
 import { i18nT } from '../i18n/t'
@@ -107,12 +109,25 @@ const TIER_BORDER: Record<ReturnType<typeof costTier>, string> = {
 export default function ModelDropdownList({ models, activeModel, onSelect }: {
   models: ModelItem[]; activeModel: string; onSelect: (name: string) => void
 }) {
+  const orderLoadFailed = useModelOrderLoadFailed()
   const activeRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: 'center', behavior: 'instant' })
   }, [])
   return (
     <div className="overflow-y-auto flex flex-col gap-0.5">
+      {/* The saved order failed to load, so this list is showing the backend's
+          own order as a fallback. Surfaced HERE, in the one renderer every
+          picker mounts, rather than in the 11 hosts — the errors-use-error-notice
+          decision is made once. askAgent off, with this as the No hand-off
+          rationale: the notice lives inside a transient dropdown portal that
+          closes on selection, the state is self-clearing (React Query retries
+          the config read), and nothing here is actionable by an agent — the
+          durable, actionable surface for the same failure is the Settings ▸
+          Chat ModelOrderCard, whose own notice carries askAgent. */}
+      {orderLoadFailed && (
+        <ErrorNotice variant="inline" message={i18nT('components.modelDropdownList.order_load_failed')} />
+      )}
       {models.map(m => {
         const active = activeModel === m.name
         const mult = m.rateMultiplier

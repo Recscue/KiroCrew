@@ -6,6 +6,7 @@ import { loadChatConfig, saveChatConfig, type ChatConfig, type ContentWidth, typ
 import { api } from '../../api/client'
 import { serializeDefaultMemoryModeUpdate } from '../../api/queryClient'
 import { useOptimisticConfigPaths, setConfigPathValue } from './useOptimisticConfigPaths'
+import { ModelOrderCard } from './ModelOrderCard'
 import { useAvailableModels } from '../../hooks/useAvailableModels'
 import { usePlainDiff } from '../../hooks/usePlainDiff'
 import { EFFORT_LEVELS, effortLabel, modelSupportsEffort } from '../../lib/effort'
@@ -662,6 +663,8 @@ export function ChatPanel() {
             configKey="agent.fallback_model"
           />
         </SettingsCard>
+
+        <ModelOrderCard />
       </SettingsSection>
 
       <SettingsSection title={i18nT('pages.settings.chatPanel.about_you')}>
