@@ -25,6 +25,7 @@ FORK_REVIEW_LANES = (
     "fork-design-review.yml",
     "fork-ux-review.yml",
     "fork-first-principles-review.yml",
+    "fork-security-scope-review.yml",
 )
 REVIEW_PROMPTS = ROOT / ".github" / "review-prompts"
 PREPARE_PR_SKILL = (
@@ -210,8 +211,8 @@ class TestHumanOverrideHandler:
         assert "pull_request_target:" not in workflow
         assert "actions/checkout@" not in workflow
         assert (
-            "/ai-review override <fable|gpt|design|ux|first-principles|all> <current-sha>: <reason>"
-            in workflow
+            "/ai-review override <fable|gpt|design|ux|first-principles|scope|all> "
+            "<current-sha>: <reason>" in workflow
         )
 
     def test_handler_covers_the_design_family_lanes(self) -> None:
@@ -220,10 +221,15 @@ class TestHumanOverrideHandler:
         # design-family targets and re-run those lanes -- the re-run's
         # human-override step then skips the model and the gate passes.
         workflow = _workflow("ai-review-human-override.yml")
-        assert "(fable|gpt|design|ux|first-principles|all)" in workflow
+        assert "(fable|gpt|design|ux|first-principles|scope|all)" in workflow
         assert 'rerun_reviewer "design-review.yml"' in workflow
         assert 'rerun_reviewer "ux-review.yml"' in workflow
         assert 'rerun_reviewer "first-principles-review.yml"' in workflow
+        # Security Scope Review is blocking too, so it needs the same escape
+        # hatch -- with one limit the handler cannot lift: a re-run re-derives
+        # the deterministic half with `deny_diff.py`, so an override clears only
+        # a MODEL-side BLOCK and a script-confirmed regression reds again.
+        assert 'rerun_reviewer "security-scope-review.yml"' in workflow
 
     def test_rerun_resolves_fork_lane_runs_from_the_stamped_check_run(self) -> None:
         # A fork PR's reviewers are the workflow_run-triggered Stage-2 lanes.
@@ -253,6 +259,7 @@ class TestHumanOverrideHandler:
             "fork-design-review.yml",
             "fork-ux-review.yml",
             "fork-first-principles-review.yml",
+            "fork-security-scope-review.yml",
         ):
             assert f'"{fork_lane}"' in script
 
@@ -284,15 +291,30 @@ class TestHumanOverrideHandler:
         # must supply WR_RUN_ID and WR_RUN_ATTEMPT so a future edit cannot drop
         # the attempt dimension silently.
         stamp = '-f details_url="$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID"'
-        for name, lane in (
-            ("fork-opus-review.yml", "opus"),
-            ("fork-gpt-review.yml", "gpt"),
-            ("fork-design-review.yml", "design"),
-            ("fork-ux-review.yml", "ux"),
-            ("fork-first-principles-review.yml", "first-principles"),
+        # `posts` is how many check-run POSTs the lane makes, and it is a
+        # PERMISSION fact, not a style choice. The five lanes below open a
+        # check-run early and re-POST a finalize fallback, so both POSTs must
+        # carry the stamp. fork-security-scope-review.yml POSTs exactly once
+        # because `checks: write` is held only by its publishing job -- the one
+        # that executes nothing -- and the job that would open a check-run early
+        # is the one running the fork's own classifier code, which is precisely
+        # what that permission split exists to keep write scope away from. So it
+        # gets its own arm rather than a lowered bar for the other five: its one
+        # POST still has to carry the stamp and the attempt-scoped external_id,
+        # since that single row is the only link from the PR head to the run.
+        for name, lane, posts in (
+            ("fork-opus-review.yml", "opus", 2),
+            ("fork-gpt-review.yml", "gpt", 2),
+            ("fork-design-review.yml", "design", 2),
+            ("fork-ux-review.yml", "ux", 2),
+            ("fork-first-principles-review.yml", "first-principles", 2),
+            ("fork-security-scope-review.yml", "scope", 1),
         ):
             workflow = _workflow(name)
-            assert workflow.count(stamp) >= 2, name
+            assert workflow.count(stamp) >= posts, name
+            assert (
+                workflow.count('gh api --method POST "repos/$REPO/check-runs"') == posts
+            ), f"{name}: expected {posts} check-run POST(s)"
             assert (
                 f'ext_args=(-f external_id="{lane}-pr-$PR-$WR_RUN_ID-$WR_RUN_ATTEMPT")' in workflow
             ), name
@@ -583,7 +605,13 @@ class TestPrReadiness:
         via env instead), and any run block that does carry an expression
         must keep clear headroom under the cap.
         """
-        for name in ("codex-review.yml", "fork-gpt-review.yml", "claude-review.yml"):
+        for name in (
+            "codex-review.yml",
+            "fork-gpt-review.yml",
+            "claude-review.yml",
+            "security-scope-review.yml",
+            "fork-security-scope-review.yml",
+        ):
             path = WORKFLOWS / name
             if not path.exists():
                 continue
@@ -643,10 +671,11 @@ class TestPrReadiness:
             "claude-review.yml": 2,
             "fork-gpt-review.yml": 3,
             "fork-opus-review.yml": 2,
+            "security-scope-review.yml": 1,
+            "fork-security-scope-review.yml": 1,
         }
-        for name, expected_calls in lanes.items():
-            doc = yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
-            steps = list(doc["jobs"].values())[0]["steps"]
+
+        def _assumes_and_calls(steps: list) -> tuple[list, list]:
             creds, calls = [], []
             for i, step in enumerate(steps):
                 uses, run = step.get("uses") or "", step.get("run") or ""
@@ -654,6 +683,27 @@ class TestPrReadiness:
                     creds.append(i)
                 elif "claude-code-action" in uses or 'timeout "$PASS_WALL"' in run:
                     calls.append((i, step.get("name")))
+            return creds, calls
+
+        for name, expected_calls in lanes.items():
+            doc = yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
+            # Read the job that HOLDS the model calls, not the file's first job.
+            # A staged lane splits the model call, the deterministic adjudication
+            # and the publishing into separate jobs so the stage carrying the
+            # Bedrock credential never executes reviewed code, and the model
+            # stage is only incidentally first there. Indexing position 0 would
+            # let a reordering move this test onto a job with no model call,
+            # where zero calls beside zero assumes reads as a pass.
+            staged = {
+                job_id: _assumes_and_calls(job.get("steps") or [])
+                for job_id, job in doc["jobs"].items()
+            }
+            holders = sorted(job_id for job_id, (_c, calls) in staged.items() if calls)
+            assert len(holders) == 1, (
+                f"{name}: expected exactly one job to carry the model calls, "
+                f"found {holders} -- a second one would spend its own session"
+            )
+            creds, calls = staged[holders[0]]
             assert len(calls) == expected_calls, (
                 f"{name}: expected {expected_calls} model calls, found " f"{[n for _, n in calls]}"
             )
@@ -2343,6 +2393,11 @@ class TestUxReviewReadsTheScreenshotsBlindFirst:
         assert "steps.evidence.outputs.screens == 'true'" in str(blind["if"])
 
 
+# The lanes whose missing head marker degrades to a NON-BLOCKING UNKNOWN.
+# The Security Scope Review lanes are deliberately absent: a missing marker REDS
+# them, because "no confirmed regression" over a tightening nobody measured is
+# the exact false green that lane exists to prevent. Adding them here would
+# assert the opposite of their contract.
 ADVISORY_LANES = {
     "design-review.yml": "DESIGN-REVIEWED",
     "fork-design-review.yml": "DESIGN-REVIEWED",
@@ -3296,6 +3351,7 @@ OVERRIDE_READ_LANES = (
     "claude-review.yml",
     "codex-review.yml",
     "first-principles-review.yml",
+    "security-scope-review.yml",
 )
 
 
@@ -3633,15 +3689,37 @@ class TestProtectedCheckNameHasOnePublisherPerPrType:
             "fork-first-principles-review.yml",
         ),
         ("ux-review.yml", "UX Review", "fork-ux-review.yml"),
+        (
+            "security-scope-review.yml",
+            "Security Scope Review",
+            "fork-security-scope-review.yml",
+        ),
     )
 
     GUARD = "github.event.pull_request.head.repo.full_name == github.repository"
 
     def _job(self, workflow: str) -> dict:
+        """Return the job that PUBLISHES the protected check name.
+
+        Counting jobs was a proxy for the property this class owns -- exactly
+        one publisher of the protected name per PR type -- and it stops being
+        one as soon as a lane needs stages. The scope lane has three jobs
+        because the stage holding the Bedrock credential must not also execute
+        the reviewed change's classifier code, nor hold the write scope that
+        publishes a verdict. So select on the thing that makes a job a
+        publisher: its `name:` carries the fork guard, which IS the rename that
+        keeps a fork PR's required status off this lane. Two such jobs would be
+        two publishers, which is the hazard; more non-publishing jobs are not.
+        """
         spec = yaml.safe_load(_workflow(workflow))
-        jobs = spec["jobs"]
-        assert len(jobs) == 1, f"{workflow}: expected a single review job"
-        return next(iter(jobs.values()))
+        publishers = sorted(
+            job_id for job_id, job in spec["jobs"].items() if self.GUARD in str(job.get("name", ""))
+        )
+        assert len(publishers) == 1, (
+            f"{workflow}: expected exactly one job publishing the protected "
+            f"name, found {publishers}"
+        )
+        return spec["jobs"][publishers[0]]
 
     @pytest.mark.parametrize("workflow,check,fork", PAIRS)
     def test_same_repo_lane_keeps_the_protected_name_only_for_same_repo_prs(
@@ -3664,9 +3742,20 @@ class TestProtectedCheckNameHasOnePublisherPerPrType:
         # The guard must NOT be job-level: a skipped job's `name:` is never
         # evaluated, so that placement publishes the raw expression above as the
         # fork PR's check name -- the exact rendering bug the rename caused.
-        assert "if" not in job, (
-            f"{workflow}: fork guard is job-level again, which makes GitHub "
-            "publish the raw name expression on fork PRs"
+        #
+        # `always()` is the one exempt expression, and it is exempt because it
+        # can never evaluate false: a job carrying exactly that is never
+        # skipped, so its `name:` is always evaluated and the bug is
+        # unreachable. A staged lane needs it -- the publishing job must report
+        # a verdict when an upstream stage failed, which is precisely the run
+        # whose verdict matters. Nothing weaker qualifies: any other condition
+        # can be false on a fork PR, and then the raw expression is the check
+        # name again.
+        job_if = str(job.get("if", "")).strip()
+        assert job_if in ("", "always()"), (
+            f"{workflow}: job-level `if: {job_if}` can evaluate false, so "
+            "GitHub skips the job and publishes the raw name expression on "
+            "fork PRs"
         )
 
     @pytest.mark.parametrize("workflow,check,fork", PAIRS)
@@ -5276,6 +5365,67 @@ def _exec_transcript(runner_temp: Path, review_text: str) -> dict[str, str]:
     return {"EXEC_FILE": str(exec_file), "REVIEW_OUTCOME": "success"}
 
 
+def _fork_scope_comment(
+    cwd: Path, runner_temp: Path, head: str, *, marker_head: str | None
+) -> dict[str, str]:
+    """Write the fork scope lane's comment body the way the lane itself writes it.
+
+    That lane's upsert step consumes ``$RUNNER_TEMP/scope-comment.md``, which a
+    SEPARATE step composes, so the fixture runs the real "Assemble the comment
+    body" bash rather than hand-writing a body. Hand-writing it would pin a shape
+    the lane never emits, and the withheld-notice wording is the exact thing the
+    guard reads -- a fixture that drifted there would report a guarantee about
+    text no run produces.
+
+    ``marker_head`` is the sha the model's own text claims: this run's head for a
+    completed verdict, a different sha (or ``None`` for no text at all) for
+    output that cannot be attributed to this revision.
+    """
+    bash = _bash()
+    if bash is None:
+        pytest.skip("the assemble step is Bash; skip where Bash is absent")
+    review = cwd / "review" / "scope-review-output.md"
+    review.parent.mkdir(parents=True, exist_ok=True)
+    if marker_head is None:
+        review.write_text("", encoding="utf-8")
+    else:
+        review.write_text(
+            "Scope-Verdict: PASS\n\nno legitimate operation newly refused\n\n"
+            f"[SCOPE-REVIEWED] {marker_head}\n",
+            encoding="utf-8",
+        )
+    body = runner_temp / "scope-verdict.md"
+    body.write_text(
+        "### Adjudicated candidates\n\n| operation | base | head |\n"
+        "| --- | --- | --- |\n| `git status` | allowed | allowed |\n",
+        encoding="utf-8",
+    )
+    present = marker_head == head
+    script = _step_script(_workflow("fork-security-scope-review.yml"), "Assemble the comment body")
+    result = subprocess.run(
+        [bash, "-e", "-c", script],
+        check=False,
+        capture_output=True,
+        cwd=cwd,
+        env={
+            **os.environ,
+            "HEAD": head,
+            "CONCLUSION": "success" if present else "failure",
+            "TITLE": (
+                "PASS - no legitimate operation newly refused"
+                if present
+                else "no [SCOPE-REVIEWED] marker for this head"
+            ),
+            "MARKER_STATE": "present" if present else "absent",
+            "REVIEW": "review/scope-review-output.md",
+            "BODY": str(body),
+            "OUT": str(runner_temp / "scope-comment.md"),
+        },
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    return {}
+
+
 # One entry per review lane that carries the guarded comment upsert. Each
 # describes how to drive that lane's REAL posting step into a completed run
 # (body carries "<stamp> <head>") and an incomplete one (no verdict for the
@@ -5428,7 +5578,72 @@ _GUARDED_LANES = [
         )[1],
         "incomplete": lambda cwd, rt, head: {"VERDICT": "UNKNOWN", "REVIEW_OUTCOME": "failure"},
     },
+    {
+        # The incomplete case is the ordinary one: the candidate stage succeeded
+        # and left no current-head marker, so the review cannot be attributed to
+        # this revision. `FOLDED=clean` keeps the classifier half silent, which
+        # is what makes this an incomplete run rather than a script-confirmed
+        # one -- the confirmed-rows path is a different contract and has its own
+        # cases below.
+        "id": "security-scope",
+        "workflow": "security-scope-review.yml",
+        "step": "Post the scope verdict",
+        "marker": "<!-- security-scope-review -->",
+        "stamp": "[SCOPE-REVIEWED]",
+        "incomplete_text": "could not complete",
+        "needs_perl": True,
+        "env": {
+            "HUMAN_OVERRIDE": "false",
+            "OVERRIDE_ACTOR": "",
+            "ACTOR": "someone",
+            # A folded verdict of `clean` keeps the script half out of the way,
+            # so each case turns on the model half exactly as the lane scores it.
+            "FOLDED": "clean",
+            "ADJUDICATED": "true",
+            "GENERATE_RESULT": "success",
+            "ADJUDICATE_RESULT": "success",
+        },
+        "completed": lambda cwd, rt, head: (
+            (cwd / "scope-review.md").write_text(
+                f"Scope-Verdict: PASS\n\nnothing newly refused\n\n[SCOPE-REVIEWED] {head}\n",
+                encoding="utf-8",
+            ),
+            {},
+        )[1],
+        "incomplete": lambda cwd, rt, head: (
+            (cwd / "scope-review.md").write_text(
+                "Scope-Verdict: PASS\n\nstale reasoning\n\n[SCOPE-REVIEWED] feedbead\n",
+                encoding="utf-8",
+            ),
+            {},
+        )[1],
+    },
+    {
+        # The body this lane upserts is composed by a different step, so both
+        # cases run that step's real bash through `_fork_scope_comment` instead
+        # of describing its output.
+        "id": "fork-security-scope",
+        "workflow": "fork-security-scope-review.yml",
+        "step": "Post/update the scope review comment",
+        "marker": "<!-- security-scope-review -->",
+        "stamp": "[SCOPE-REVIEWED]",
+        "incomplete_text": "the model's text is withheld",
+        "needs_perl": False,
+        "env": {},
+        "completed": lambda cwd, rt, head: _fork_scope_comment(cwd, rt, head, marker_head=head),
+        "incomplete": lambda cwd, rt, head: _fork_scope_comment(
+            cwd, rt, head, marker_head="feedbead"
+        ),
+    },
 ]
+
+# Both scope lanes are registered above. One asymmetry between them is real and
+# is NOT a gap: the same-repo lane can publish on the CLASSIFIER's authority when
+# the model half left no marker (see the confirmed-rows cases below), while the
+# fork lane's assemble step withholds and stamps nothing in that state, so its
+# rows reach the author only through the check-run summary. The fork lane's rows
+# are not lost -- its publishing job POSTs them into the Checks UI -- but they do
+# not land in the PR comment.
 
 _GUARDED_LANE_PARAMS = [pytest.param(lane, id=lane["id"]) for lane in _GUARDED_LANES]
 
@@ -5436,7 +5651,7 @@ _GUARDED_LANE_PARAMS = [pytest.param(lane, id=lane["id"]) for lane in _GUARDED_L
 class TestReviewLaneVerdictVisibility:
     """No review lane may bury a posted verdict under an incomplete body.
 
-    Covers the eight lanes that upsert a marker-keyed summary comment outside
+    Covers every lane that upserts a marker-keyed summary comment outside
     codex-review.yml. Each lane defines the guarded upsert as a byte-identical
     ``guarded_comment_upsert`` bash function; the identity test pins every
     copy to one canonical body so the invariant cannot drift lane by lane, and
@@ -5472,6 +5687,7 @@ class TestReviewLaneVerdictVisibility:
         existing_body: str | None,
         kind: str,
         extra_env: dict[str, str] | None = None,
+        prepare: object | None = None,
     ) -> tuple[Path, "subprocess.CompletedProcess[bytes]"]:
         bash = _bash()
         if bash is None or shutil.which("jq") is None:
@@ -5514,6 +5730,11 @@ class TestReviewLaneVerdictVisibility:
             case_env = lane["incomplete"](cwd, runner_temp, self.HEAD)
         else:
             case_env = {}
+        # A case that needs a file the lane's own kind fixtures do not write
+        # (the classifier's folded verdict, say) adds it here, so the shared
+        # fixtures keep meaning exactly what the seven contracts above assert.
+        if prepare is not None:
+            case_env = {**case_env, **prepare(cwd, runner_temp, self.HEAD)}
 
         gh_stub = stub_dir / "gh"
         gh_stub.write_text(
@@ -5749,6 +5970,96 @@ class TestReviewLaneVerdictVisibility:
         assert created.startswith(f"{lane['marker']}\n")
         assert lane["incomplete_text"] in created
         assert not (calls / "patched-body.md").exists()
+
+    # A row the classifier flipped: the whole point of the lane, and the thing a
+    # reader needs in order to act -- which legitimate operation broke, at which
+    # tier.
+    ROWS = "| `chmod 0700 ~/.ssh` | allowed | REFUSED |"
+
+    def _scope_lane(self) -> dict:
+        return next(entry for entry in _GUARDED_LANES if entry["id"] == "security-scope")
+
+    def _fold_rows(self, cwd: Path, runner_temp: Path, head: str) -> dict[str, str]:
+        """Leave the folded verdict `scope_candidates.py verdict --out-md` writes."""
+        (cwd / "verdict-body.md").write_text(
+            "### Confirmed newly-refused operations\n\n"
+            "| operation | base | head |\n| --- | --- | --- |\n"
+            f"{self.ROWS}\n",
+            encoding="utf-8",
+        )
+        return {}
+
+    def test_a_confirmed_regression_publishes_its_rows_with_no_model_marker(
+        self, tmp_path: Path
+    ) -> None:
+        # `deny_diff.py` classified these rows at the base ref and at this head,
+        # so they describe this revision whatever the model produced. Before,
+        # a run whose model half left no marker wrote a body the guard could not
+        # accept as complete, so nothing was posted at all: the author saw a red
+        # badge and had to open the job logs to learn what the script had
+        # already decided.
+        lane = self._scope_lane()
+        calls, result = self._run_step(
+            lane,
+            tmp_path,
+            existing_body=self._verdict_body(lane, self.OLD),
+            kind="incomplete",
+            prepare=self._fold_rows,
+            extra_env={"FOLDED": "regression"},
+        )
+
+        assert result.returncode == 0, result.stderr.decode()
+        patched = (calls / "patched-body.md").read_text(encoding="utf-8")
+        assert self.ROWS in patched
+        assert f"[SCOPE-REVIEWED] {self.HEAD}" in patched
+        # The model's own text is withheld exactly as it was: with no
+        # current-head marker it is a review of something else, and printing it
+        # beside a verdict would read as that verdict's reasoning.
+        assert "stale reasoning" not in patched
+        assert "[SCOPE-REVIEWED] feedbead" not in patched
+        assert "its text is withheld" in patched
+
+    def test_a_no_verdict_run_still_carries_whatever_the_classifier_measured(
+        self, tmp_path: Path
+    ) -> None:
+        # The fail-closed notice branch, where no verdict parsed at all. A leg
+        # that reported NO VERDICT is still this head's measurement and names the
+        # surface left unadjudicated, so it rides along with the notice.
+        lane = self._scope_lane()
+        calls, result = self._run_step(
+            lane,
+            tmp_path,
+            existing_body=self._verdict_body(lane, self.OLD),
+            kind="incomplete",
+            prepare=self._fold_rows,
+        )
+
+        assert result.returncode == 0, result.stderr.decode()
+        patched = (calls / "patched-body.md").read_text(encoding="utf-8")
+        assert "could not complete" in patched
+        assert self.ROWS in patched
+        assert f"[SCOPE-REVIEWED] {self.HEAD}" in patched
+        assert "stale reasoning" not in patched
+
+    def test_a_run_that_measured_nothing_still_withholds_the_comment(self, tmp_path: Path) -> None:
+        # The stamp comes from the classifier's OUTPUT, never from the fact that
+        # the step ran. With no folded verdict nothing is attributable to this
+        # head, so the shared slot is left alone -- otherwise publishing on the
+        # classifier's authority would become a licence to bury a live verdict
+        # under a notice, which is the #8344 loss the guard exists to stop.
+        lane = self._scope_lane()
+        calls, result = self._run_step(
+            lane,
+            tmp_path,
+            existing_body=self._verdict_body(lane, self.OLD),
+            kind="incomplete",
+            extra_env={"FOLDED": "regression"},
+        )
+
+        assert result.returncode == 0, result.stderr.decode()
+        assert not (calls / "patched-body.md").exists()
+        assert not (calls / "created-body.md").exists()
+        assert "left existing comment #123 untouched" in result.stdout.decode()
 
     def test_withheld_fork_fp_body_leaves_a_posted_verdict_alone(self, tmp_path: Path) -> None:
         # The fork first-principles lane posts its withheld notice from a
@@ -6152,6 +6463,10 @@ CONCERNS_FORK_LANES = (
 
 # Their same-repo twins, which own a JOB rather than a check-run and so cannot
 # report themselves neutral: (workflow, posting step, status step, lane label).
+# security-scope-review.yml is not one of them: it emits no CONCERNS digest into
+# `GITHUB_STEP_SUMMARY` -- its summary carries the folded per-platform verdict
+# and the confirmed rows instead -- so an entry here could only be satisfied by
+# inventing a digest the lane does not have.
 CONCERNS_SAME_LANES = (
     (
         "design-review.yml",

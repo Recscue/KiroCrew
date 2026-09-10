@@ -3,7 +3,7 @@ name: AI Review Human Override
 # Human judgment is authoritative over the three AI review gates. A repository
 # writer can record a SHA-scoped false-positive / not-applicable decision with:
 #
-#   /ai-review override <fable|gpt|design|ux|first-principles|all> <current-sha>: <reason>
+#   /ai-review override <fable|gpt|design|ux|first-principles|scope|all> <current-sha>: <reason>
 #
 # issue_comment workflows execute from the trusted default branch, never from
 # the PR head. The handler validates identity + commit freshness, records a
@@ -55,7 +55,7 @@ jobs:
           }
 
           first_line="${COMMENT_BODY%%$'\n'*}"
-          pattern='^/ai-review override (fable|gpt|design|ux|first-principles|all) ([0-9a-fA-F]{7,40}):[[:space:]]*(.+)$'
+          pattern='^/ai-review override (fable|gpt|design|ux|first-principles|scope|all) ([0-9a-fA-F]{7,40}):[[:space:]]*(.+)$'
           if [[ ! "$first_line" =~ $pattern ]]; then
             post_notice 'AI-review override not recorded. Use `/ai-review override <fable|gpt|all> <current-sha>: <one-sentence reason>`.'
             exit 1
@@ -166,6 +166,7 @@ jobs:
           || steps.context.outputs.target == 'design'
           || steps.context.outputs.target == 'ux'
           || steps.context.outputs.target == 'first-principles'
+          || steps.context.outputs.target == 'scope'
           || steps.context.outputs.target == 'all'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -316,6 +317,19 @@ jobs:
           fi
           if [ "$TARGET" = "first-principles" ] || [ "$TARGET" = "all" ]; then
             rerun_reviewer "first-principles-review.yml" "First Principles Review" "First Principles Review" "first-principles" "fork-first-principles-review.yml"
+          fi
+          # What an override can and cannot do here. Security Scope Review is
+          # half model and half script: the re-run's "Resolve human override"
+          # step finds this marker and skips the model, so a MODEL-side BLOCK --
+          # a reviewer that wrote BLOCK on a demonstrated platform gap, or a run
+          # that produced no verdict at all -- clears. A script-confirmed
+          # regression does not: `deny_diff.py` re-derives it from the two refs
+          # on every run, with no marker in its path, so the lane reds again.
+          # That is the design, not a gap: the way to green past a confirmed
+          # newly-refused operation is to narrow the rule, never to overrule the
+          # measurement.
+          if [ "$TARGET" = "scope" ] || [ "$TARGET" = "all" ]; then
+            rerun_reviewer "security-scope-review.yml" "Security Scope Review" "Security Scope Review" "scope" "fork-security-scope-review.yml"
           fi
 
           if [ -n "$failed_lanes" ]; then
