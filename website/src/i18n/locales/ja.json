@@ -10154,7 +10154,10 @@
       "value_prop_stripe": "Stripe の顧客、支払い、請求書を照会します。",
       "value_prop_vercel": "Vercel のプロジェクトとデプロイを確認します。",
       "waiting_for_approval": "承認待機中",
-      "waiting_for_approval_address": "承認アドレスを待機中…エージェントが次に接続するときにここに表示されます。チャットメッセージを送信して今すぐ認可を開始してください。"
+      "waiting_for_approval_address": "承認アドレスを待機中…エージェントが次に接続するときにここに表示されます。チャットメッセージを送信して今すぐ認可を開始してください。",
+      "needs_configuration": "設定が必要",
+      "needs_configuration_help": "{{provider}} には初回のみの設定が必要です。{{provider}} の開発者コンソールで OAuth アプリを登録し、その Client ID とシークレットをここに入力してください。",
+      "configure_oauth_app": "OAuth アプリを設定"
     },
     "contextBreakdown": {
       "axis_bar": "バー長さ ∝ √chars · セグメント = そのターンの構成",
@@ -14004,6 +14007,37 @@
         "could_not_sign_out": "サインアウトできませんでした",
         "keep_current_sign_in": "現在のサインインを維持",
         "signed_in_body_no_refresh": "エージェントはこの Kiro アカウントとして動作します。このサインインにはリフレッシュトークンがなく自動更新できません。期限切れになる前に再度サインインしてください。"
+      },
+      "connectionsPanel": {
+        "title": "コネクション用の OAuth アプリ",
+        "intro": "一部のプロバイダーは OAuth クライアントの自動登録を受け付けません。以下の各プロバイダーについて、ランブックに従ってベンダーのコンソールでアプリを登録し、ここに表示されたリダイレクト URI をそのままそのアプリに貼り付けてから、アプリのクライアント ID とシークレットを入力してください。環境変数で設定した値は、ここに保存した値より優先されます。",
+        "loading": "読み込み中…",
+        "none": "このインストールのすべてのプロバイダーは OAuth クライアントを自動登録するため、ここで設定するものはありません。",
+        "load_failed": "OAuth アプリを読み込めませんでした",
+        "configured": "設定済み",
+        "not_configured": "未設定",
+        "card_intro": "{{provider}} の開発者コンソールでアプリを登録し、その資格情報を以下に入力してください。",
+        "open_runbook": "{{provider}} の登録ランブックを開く",
+        "redirect_uri": "リダイレクト URI",
+        "redirect_uri_help": "ベンダーのコンソールにこの値を正確に登録してください。",
+        "copy_redirect_uri": "リダイレクト URI をコピー",
+        "copy": "コピー",
+        "copied": "コピーしました",
+        "client_id": "クライアント ID",
+        "client_id_help": "登録したアプリの公開識別子です。config.json に保存されます。",
+        "client_id_placeholder": "クライアント ID を貼り付け",
+        "client_secret": "クライアントシークレット",
+        "client_secret_required": "{{provider}} はトークンエンドポイントでクライアントシークレットを要求します。シークレット保管庫に暗号化して保存され、再表示されることはありません。",
+        "client_secret_optional": "{{provider}} はパブリッククライアントを受け付けるため、シークレットは省略できます。シークレット保管庫に暗号化して保存され、再表示されることはありません。",
+        "client_secret_placeholder": "クライアントシークレットを貼り付け",
+        "set_by_environment": "環境変数 {{name}} で設定されており、ここに保存した値より優先されます。",
+        "save": "保存",
+        "saving": "保存中…",
+        "save_failed": "OAuth アプリを保存できませんでした",
+        "remove": "削除",
+        "remove_client": "{{provider}} の OAuth アプリを削除",
+        "oauth_app": "OAuth アプリ",
+        "oauth_app_search_description": "登録済み OAuth アプリが必要なプロバイダーの Client ID、クライアントシークレット、リダイレクト URI"
       }
     },
     "settingsPage": {
@@ -14528,6 +14562,10 @@
       "secrets": {
         "label": "Secrets",
         "description": "APIキーと資格情報を安全に保存"
+      },
+      "connections": {
+        "label": "OAuth アプリ",
+        "description": "登録済みクライアントが必要なプロバイダー向けの OAuth アプリ"
       }
     },
     "secrets": {

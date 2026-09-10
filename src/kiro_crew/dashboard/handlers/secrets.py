@@ -41,6 +41,8 @@ def _sel():
 
 
 _MANAGED_KIND_JIRA_HOST_TOKEN = "jira_host_token"
+# A Connections pre-registered OAuth client secret (``connections/oauth_clients``).
+_MANAGED_KIND_CONNECTIONS_CLIENT_SECRET = "connections_client_secret"
 
 
 def _managed_secret_config() -> tuple[list[str], bool, bool, bool]:
@@ -107,6 +109,18 @@ def _managed_secret_catalog(
                     "kind": _MANAGED_KIND_JIRA_HOST_TOKEN,
                     "host": host,
                 }
+            )
+    # Connections OAuth client secrets. Listed only when STORED: the entry field
+    # lives on Settings → OAuth Apps, so the Secrets panel's job is to label an
+    # existing entry with its owner (not offer an empty slot), and keep a cleanup
+    # from reading it as a stray user secret. ``host`` carries the provider slug,
+    # the same way the Jira rows carry their host.
+    from kiro_crew.connections.oauth_clients import managed_client_secret_names
+
+    for name, slug in sorted(managed_client_secret_names().items()):
+        if name in name_set:
+            catalog.append(
+                {"name": name, "kind": _MANAGED_KIND_CONNECTIONS_CLIENT_SECRET, "host": slug}
             )
     return catalog
 

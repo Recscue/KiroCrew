@@ -10154,7 +10154,10 @@
       "value_prop_stripe": "Stripe 고객, 결제, 청구서를 조회합니다.",
       "value_prop_vercel": "Vercel 프로젝트와 배포를 확인합니다.",
       "waiting_for_approval": "승인 대기 중",
-      "waiting_for_approval_address": "승인 주소를 기다리는 중… 에이전트가 다음에 연결할 때 여기에 표시됩니다 — 지금 인증을 시작하려면 아무 채팅 메시지나 보내세요."
+      "waiting_for_approval_address": "승인 주소를 기다리는 중… 에이전트가 다음에 연결할 때 여기에 표시됩니다 — 지금 인증을 시작하려면 아무 채팅 메시지나 보내세요.",
+      "needs_configuration": "설정 필요",
+      "needs_configuration_help": "{{provider}}은(는) 최초 1회 설정이 필요합니다. {{provider}} 개발자 콘솔에서 OAuth 앱을 등록한 뒤 해당 Client ID와 시크릿을 여기에 입력하세요.",
+      "configure_oauth_app": "OAuth 앱 설정"
     },
     "contextBreakdown": {
       "axis_bar": "막대 길이 ∝ √chars · 세그먼트 = 해당 턴의 구성",
@@ -14004,6 +14007,37 @@
         "could_not_sign_out": "로그아웃할 수 없음",
         "keep_current_sign_in": "현재 로그인 유지",
         "signed_in_body_no_refresh": "에이전트는 이 Kiro 계정으로 실행됩니다. 이 로그인에는 리프레시 토큰이 없어 자동으로 갱신되지 않습니다. 만료되기 전에 다시 로그인하세요."
+      },
+      "connectionsPanel": {
+        "title": "연결용 OAuth 앱",
+        "intro": "일부 제공업체는 OAuth 클라이언트 자동 등록을 거부합니다. 아래 각 항목에 대해 런북을 따라 공급업체 콘솔에 앱을 등록하고, 여기에 표시된 리디렉션 URI를 그대로 해당 앱에 붙여 넣은 뒤 앱의 클라이언트 ID와 비밀을 입력하세요. 환경 변수로 설정한 값은 여기에 저장한 값보다 우선합니다.",
+        "loading": "불러오는 중…",
+        "none": "이 설치의 모든 제공업체는 OAuth 클라이언트를 직접 등록하므로 여기서 설정할 항목이 없습니다.",
+        "load_failed": "OAuth 앱을 불러올 수 없음",
+        "configured": "설정됨",
+        "not_configured": "설정되지 않음",
+        "card_intro": "{{provider}} 개발자 콘솔에 앱을 등록하고 아래에 자격 증명을 입력하세요.",
+        "open_runbook": "{{provider}} 등록 런북 열기",
+        "redirect_uri": "리디렉션 URI",
+        "redirect_uri_help": "공급자 콘솔에 이 값을 정확히 등록하세요.",
+        "copy_redirect_uri": "리디렉션 URI 복사",
+        "copy": "복사",
+        "copied": "복사됨",
+        "client_id": "클라이언트 ID",
+        "client_id_help": "등록된 앱의 공개 식별자입니다. config.json에 저장됩니다.",
+        "client_id_placeholder": "클라이언트 ID 붙여 넣기",
+        "client_secret": "클라이언트 비밀",
+        "client_secret_required": "{{provider}}은(는) 토큰 엔드포인트에서 클라이언트 비밀을 요구합니다. 비밀 저장소에 암호화되어 저장되며 다시 표시되지 않습니다.",
+        "client_secret_optional": "{{provider}}은(는) 공개 클라이언트를 허용하므로 비밀은 선택 사항입니다. 비밀 저장소에 암호화되어 저장되며 다시 표시되지 않습니다.",
+        "client_secret_placeholder": "클라이언트 비밀 붙여 넣기",
+        "set_by_environment": "환경 변수 {{name}}으로 설정되어 있으며, 여기에 저장된 값보다 우선합니다.",
+        "save": "저장",
+        "saving": "저장 중…",
+        "save_failed": "OAuth 앱을 저장할 수 없음",
+        "remove": "제거",
+        "remove_client": "{{provider}} OAuth 앱 제거",
+        "oauth_app": "OAuth 앱",
+        "oauth_app_search_description": "등록된 OAuth 앱이 필요한 제공자의 Client ID, 클라이언트 시크릿, 리디렉션 URI"
       }
     },
     "settingsPage": {
@@ -14528,6 +14562,10 @@
       "secrets": {
         "label": "Secrets",
         "description": "API 키와 자격 증명을 안전하게 저장"
+      },
+      "connections": {
+        "label": "OAuth 앱",
+        "description": "등록된 클라이언트가 필요한 제공업체용 OAuth 앱"
       }
     },
     "secrets": {

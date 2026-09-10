@@ -10464,7 +10464,10 @@
       "value_prop_stripe": "Consultar clientes, pagamentos e faturas do Stripe.",
       "value_prop_vercel": "Inspecionar seus projetos e deployments da Vercel.",
       "waiting_for_approval": "Aguardando aprovação",
-      "waiting_for_approval_address": "Aguardando o endereço de aprovação… Ele aparecerá aqui na próxima conexão do agente — envie qualquer mensagem no chat para iniciar a autorização agora."
+      "waiting_for_approval_address": "Aguardando o endereço de aprovação… Ele aparecerá aqui na próxima conexão do agente — envie qualquer mensagem no chat para iniciar a autorização agora.",
+      "needs_configuration": "Requer configuração",
+      "needs_configuration_help": "{{provider}} precisa de uma configuração única: registre um aplicativo OAuth no console de desenvolvedor do {{provider}} e depois insira aqui o Client ID e o segredo dele.",
+      "configure_oauth_app": "Configurar app OAuth"
     },
     "contextBreakdown": {
       "axis_bar": "comprimento da barra ∝ √caracteres · segmentos = composição desse turno",
@@ -14362,6 +14365,37 @@
         "could_not_sign_out": "Não foi possível sair",
         "keep_current_sign_in": "Manter o login atual",
         "signed_in_body_no_refresh": "Os agentes são executados com esta conta Kiro. Este login não tem token de atualização e não pode se renovar sozinho — entre novamente antes que expire."
+      },
+      "connectionsPanel": {
+        "title": "Apps OAuth para Conexões",
+        "intro": "Alguns provedores se recusam a registrar um cliente OAuth automaticamente. Para cada um abaixo, siga o runbook correspondente para registrar um app no console do fornecedor, cole nesse app exatamente o URI de redirecionamento mostrado aqui e depois informe o client ID e o client secret do app. Valores definidos por variáveis de ambiente substituem o que for salvo aqui.",
+        "loading": "Carregando…",
+        "none": "Todos os provedores desta instalação registram o próprio cliente OAuth, então não há nada para configurar aqui.",
+        "load_failed": "Não foi possível carregar os apps OAuth",
+        "configured": "Configurado",
+        "not_configured": "Não configurado",
+        "card_intro": "Registre um app no console de desenvolvedor do {{provider}} e informe as credenciais abaixo.",
+        "open_runbook": "Abrir o runbook de registro do {{provider}}",
+        "redirect_uri": "URI de redirecionamento",
+        "redirect_uri_help": "Registre exatamente este valor no console do provedor.",
+        "copy_redirect_uri": "Copiar URI de redirecionamento",
+        "copy": "Copiar",
+        "copied": "Copiado",
+        "client_id": "Client ID",
+        "client_id_help": "Identificador público do app registrado. Armazenado em config.json.",
+        "client_id_placeholder": "Cole o client ID",
+        "client_secret": "Client secret",
+        "client_secret_required": "O {{provider}} exige um client secret no endpoint de token. Armazenado criptografado no cofre de segredos e nunca mais exibido.",
+        "client_secret_optional": "O {{provider}} aceita um cliente público, então o secret é opcional. Armazenado criptografado no cofre de segredos e nunca mais exibido.",
+        "client_secret_placeholder": "Cole o client secret",
+        "set_by_environment": "Definido pela variável de ambiente {{name}}, que substitui qualquer valor salvo aqui.",
+        "save": "Salvar",
+        "saving": "Salvando…",
+        "save_failed": "Não foi possível salvar o app OAuth",
+        "remove": "Remover",
+        "remove_client": "Remover o app OAuth do {{provider}}",
+        "oauth_app": "Aplicativo OAuth",
+        "oauth_app_search_description": "Client ID, segredo do cliente e URI de redirecionamento de um provedor que exige um aplicativo OAuth registrado"
       }
     },
     "settingsPage": {
@@ -14912,6 +14946,10 @@
       "secrets": {
         "label": "Secrets",
         "description": "Armazene chaves de API e credenciais com segurança"
+      },
+      "connections": {
+        "label": "Aplicativos OAuth",
+        "description": "Apps OAuth para provedores que exigem um cliente registrado"
       }
     },
     "secrets": {

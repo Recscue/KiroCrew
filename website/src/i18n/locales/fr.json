@@ -10464,7 +10464,10 @@
       "value_prop_stripe": "Consulter les clients, paiements et factures Stripe.",
       "value_prop_vercel": "Inspecter vos projets et déploiements Vercel.",
       "waiting_for_approval": "En attente d’autorisation",
-      "waiting_for_approval_address": "En attente de l’adresse d’autorisation… Elle s’affichera ici lors de la prochaine connexion de l’agent — envoyez un message dans le chat pour lancer l’autorisation."
+      "waiting_for_approval_address": "En attente de l’adresse d’autorisation… Elle s’affichera ici lors de la prochaine connexion de l’agent — envoyez un message dans le chat pour lancer l’autorisation.",
+      "needs_configuration": "Configuration requise",
+      "needs_configuration_help": "{{provider}} nécessite une configuration unique : enregistre une application OAuth dans la console développeur {{provider}}, puis saisis ici son Client ID et son secret.",
+      "configure_oauth_app": "Configurer l’application OAuth"
     },
     "contextBreakdown": {
       "axis_bar": "longueur de barre ∝ √caractères · segments = composition de ce tour",
@@ -14363,6 +14366,37 @@
         "could_not_sign_out": "Déconnexion impossible",
         "keep_current_sign_in": "Conserver la connexion actuelle",
         "signed_in_body_no_refresh": "Les agents s’exécutent avec ce compte Kiro. Cette connexion n’a pas de jeton de rafraîchissement et ne peut pas se renouveler seule — reconnectez-vous avant son expiration."
+      },
+      "connectionsPanel": {
+        "title": "Applications OAuth pour Connexions",
+        "intro": "Certains fournisseurs refusent d’enregistrer un client OAuth automatiquement. Pour chacun d’eux ci-dessous, suis son guide pour enregistrer une application dans la console du fournisseur, colle dans cette application l’URI de redirection exacte affichée ici, puis saisis l’ID client et le secret de l’application. Les valeurs définies par des variables d’environnement remplacent celles enregistrées ici.",
+        "loading": "Chargement…",
+        "none": "Chaque fournisseur de cette installation enregistre lui-même son client OAuth, il n’y a donc rien à configurer ici.",
+        "load_failed": "Impossible de charger les applications OAuth",
+        "configured": "Configuré",
+        "not_configured": "Non configuré",
+        "card_intro": "Enregistre une application dans la console développeur de {{provider}} et saisis ses identifiants ci-dessous.",
+        "open_runbook": "Ouvrir le guide d’enregistrement de {{provider}}",
+        "redirect_uri": "URI de redirection",
+        "redirect_uri_help": "Enregistre exactement cette valeur dans la console du fournisseur.",
+        "copy_redirect_uri": "Copier l’URI de redirection",
+        "copy": "Copier",
+        "copied": "Copié",
+        "client_id": "ID client",
+        "client_id_help": "Identifiant public de l’application enregistrée. Stocké dans config.json.",
+        "client_id_placeholder": "Colle l’ID client",
+        "client_secret": "Secret client",
+        "client_secret_required": "{{provider}} exige un secret client au point de terminaison des jetons. Stocké chiffré dans le coffre-fort de secrets et jamais affiché à nouveau.",
+        "client_secret_optional": "{{provider}} accepte un client public, le secret est donc facultatif. Stocké chiffré dans le coffre-fort de secrets et jamais affiché à nouveau.",
+        "client_secret_placeholder": "Colle le secret client",
+        "set_by_environment": "Défini par la variable d’environnement {{name}}, qui remplace toute valeur enregistrée ici.",
+        "save": "Enregistrer",
+        "saving": "Enregistrement…",
+        "save_failed": "Impossible d’enregistrer l’application OAuth",
+        "remove": "Retirer",
+        "remove_client": "Retirer l’application OAuth de {{provider}}",
+        "oauth_app": "Application OAuth",
+        "oauth_app_search_description": "Client ID, secret client et URI de redirection d'un fournisseur qui exige une application OAuth enregistrée"
       }
     },
     "settingsPage": {
@@ -14913,6 +14947,10 @@
       "secrets": {
         "label": "Secrets",
         "description": "Stockez les clés API et identifiants en toute sécurité"
+      },
+      "connections": {
+        "label": "Applications OAuth",
+        "description": "Applications OAuth pour les fournisseurs qui exigent un client enregistré"
       }
     },
     "secrets": {

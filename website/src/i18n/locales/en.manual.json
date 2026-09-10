@@ -4074,7 +4074,10 @@
       "value_prop_stripe": "Look up Stripe customers, payments, and invoices.",
       "value_prop_vercel": "Inspect your Vercel projects and deployments.",
       "waiting_for_approval": "Waiting for approval",
-      "waiting_for_approval_address": "Waiting for the approval address… it appears here when the agent next connects — send any chat message to start authorization now."
+      "waiting_for_approval_address": "Waiting for the approval address… it appears here when the agent next connects — send any chat message to start authorization now.",
+      "needs_configuration": "Needs configuration",
+      "needs_configuration_help": "{{provider}} needs a one-time setup: register an OAuth app in the {{provider}} developer console, then enter its client ID and secret here.",
+      "configure_oauth_app": "Configure OAuth app"
     },
     "devFleetPage": {
       "applies_the_last_pull_build_the_dashboard_will_b": "Applies the last Pull+Build. The dashboard will briefly disconnect and reconnect on its own.",
@@ -5966,6 +5969,37 @@
         "could_not_sign_out": "Could not sign out",
         "keep_current_sign_in": "Keep the current sign-in",
         "signed_in_body_no_refresh": "Agents run as this Kiro account. This sign-in has no refresh token, so it cannot renew itself — sign in again before it expires."
+      },
+      "connectionsPanel": {
+        "title": "OAuth apps for Connections",
+        "intro": "Some providers refuse to register an OAuth client automatically. For each one below, follow its runbook to register an app in the vendor console, paste the exact redirect URI shown here into that app, then enter the app's client ID and secret. Values set through environment variables override what is saved here.",
+        "loading": "Loading…",
+        "none": "Every provider in this install registers its own OAuth client, so there is nothing to configure here.",
+        "load_failed": "Could not load OAuth apps",
+        "configured": "Configured",
+        "not_configured": "Not configured",
+        "card_intro": "Register an app in the {{provider}} developer console and enter its credentials below.",
+        "open_runbook": "Open the {{provider}} registration runbook",
+        "redirect_uri": "Redirect URI",
+        "redirect_uri_help": "Register exactly this value in the vendor console.",
+        "copy_redirect_uri": "Copy redirect URI",
+        "copy": "Copy",
+        "copied": "Copied",
+        "client_id": "Client ID",
+        "client_id_help": "Public identifier of the registered app. Stored in config.json.",
+        "client_id_placeholder": "Paste the client ID",
+        "client_secret": "Client secret",
+        "client_secret_required": "{{provider}} requires a client secret at the token endpoint. Stored encrypted in the secrets vault and never shown again.",
+        "client_secret_optional": "{{provider}} accepts a public client, so the secret is optional. Stored encrypted in the secrets vault and never shown again.",
+        "client_secret_placeholder": "Paste the client secret",
+        "set_by_environment": "Set by the environment variable {{name}}, which overrides any value saved here.",
+        "save": "Save",
+        "saving": "Saving…",
+        "save_failed": "Could not save the OAuth app",
+        "remove": "Remove",
+        "remove_client": "Remove the {{provider}} OAuth app",
+        "oauth_app": "OAuth app",
+        "oauth_app_search_description": "Client ID, client secret and redirect URI for a provider that needs a registered OAuth app"
       }
     },
     "systemPage": {},
@@ -6147,6 +6181,10 @@
       "voice": {
         "description": "Text-to-speech and speech-to-text (dictation) settings",
         "label": "Voice"
+      },
+      "connections": {
+        "label": "OAuth Apps",
+        "description": "OAuth apps for providers that need a registered client"
       }
     }
   },

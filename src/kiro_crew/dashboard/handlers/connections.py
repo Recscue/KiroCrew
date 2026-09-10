@@ -342,6 +342,18 @@ async def api_connections_mint(request: web.Request) -> web.Response:
     _body, provider = parsed
     slug = str(provider["slug"])
 
+    # A pre-registered provider (registry ``auth.mode``) has nothing to mint
+    # against until the operator has entered a usable client: kiro-cli would only
+    # come back with the vendor's "unknown client" error, which no user can act on,
+    # and the card is already rendering the instruction instead of Connect. Refuse
+    # here too so a stale tab or a hand-built request cannot start that process.
+    if not await asyncio.to_thread(_oauth_client_configured, provider):
+        return _conflict(
+            "this provider needs an OAuth app configured under Settings → OAuth Apps",
+            "client_not_configured",
+            slug=slug,
+        )
+
     # Function-local by DESIGN, not for a cycle: this handlers package is imported
     # on the gateway boot path, and the mint engine drags in the ACP client, the
     # credential predicate and the PID registry -- the warm engine adds the ACP
@@ -789,3 +801,298 @@ async def api_connections_premint(request: web.Request) -> web.Response:
         resources=f"providers:{len(slugs)}",
     )
     return web.json_response({"ok": True, "preminting": slugs})
+
+
+# ── Operator-registered OAuth clients (Settings → OAuth Apps) ───────────────
+#
+# Three routes over one record per pre-registered provider. The record has two
+# halves with different custody: the PUBLIC client id lives in ``config.json``
+# and is echoed back; the client SECRET lives in the vault and is reported only
+# as ``client_secret_set`` -- no route returns it, by the same rule the Secrets
+# panel follows. Owner-only throughout: a client binds every future consent to
+# an app somebody registered, which is a write the same trust boundary as the
+# grant itself must own. Rationale and precedence: ``connections/oauth_clients``.
+
+
+def _oauth_client_views() -> list[dict]:
+    """The dashboard record for every pre-registered provider. Worker-thread only."""
+    from kiro_crew.config import config_dir
+    from kiro_crew.config.loader import read_config_for_update
+    from kiro_crew.connections.oauth_clients import oauth_client_view
+    from kiro_crew.connections.registry import get_preregistered_providers
+    from kiro_crew.secrets import SecretVault
+
+    try:
+        config = read_config_for_update()
+    except Exception:  # noqa: BLE001 -- unreadable config reads as "not configured"
+        config = {}
+    try:
+        names = set(SecretVault(config_dir()).list_names())
+    except Exception:  # noqa: BLE001 -- an unreadable vault must not take the tab down
+        names = set()
+    return [
+        dict(oauth_client_view(provider, config=config, vault_names=names))
+        for provider in get_preregistered_providers()
+    ]
+
+
+def _oauth_client_configured(provider: Provider) -> bool:
+    """Whether ``provider`` can attempt an authorization right now. Worker-thread only.
+
+    True for every DCR provider (nothing to configure). For a pre-registered one,
+    the same predicate the status feed and the Settings card use, so the three
+    surfaces cannot disagree about whether Connect is possible.
+    """
+    from kiro_crew.connections.registry import is_preregistered
+
+    if not is_preregistered(provider):
+        return True
+    from kiro_crew.config import config_dir
+    from kiro_crew.config.loader import read_config_for_update
+    from kiro_crew.connections.oauth_clients import oauth_client_view
+    from kiro_crew.secrets import SecretVault
+
+    try:
+        config = read_config_for_update()
+    except Exception:  # noqa: BLE001 -- unreadable config reads as "not configured"
+        config = {}
+    try:
+        names = set(SecretVault(config_dir()).list_names())
+    except Exception:  # noqa: BLE001 -- an unreadable vault reads as "not configured"
+        names = set()
+    return bool(oauth_client_view(provider, config=config, vault_names=names).get("configured"))
+
+
+async def _refresh_client_projections(slug: str) -> None:
+    """Bring every runtime projection of ``slug``'s client in line with the record.
+
+    The vault and config.json are the source of truth; the emitted agent spec and
+    any in-flight mint are PROJECTIONS of them, and a projection left standing
+    after a rotate or a delete keeps authorizing with the credential the operator
+    just retired. So, after every mutation: (1) withdraw the slug's in-flight
+    mint, whose ephemeral spec was copied from the old record; (2) rebuild the
+    agent spec so the next session reads the new client (or none). Both are
+    best-effort like the MCP custom path's rebuild -- a failure is logged, and
+    the response still reports the record that IS stored, because the record
+    write already happened. Running sessions keep their loaded spec until they
+    restart, which is the same contract every other agent-spec edit has.
+    """
+    from kiro_crew.connections.mint import cancel_mint
+
+    try:
+        await cancel_mint(slug)
+    except Exception:  # noqa: BLE001 -- see docstring
+        logger.warning(
+            "cancel_mint failed after an OAuth client change for %s", slug, exc_info=True
+        )
+    try:
+        from kiro_crew.agent import rebuild_agent_config  # circular at module scope
+
+        await asyncio.to_thread(rebuild_agent_config)
+    except Exception:  # noqa: BLE001 -- see docstring
+        logger.warning("rebuild_agent_config failed after an OAuth client change", exc_info=True)
+
+
+def _preregistered_provider(request: web.Request) -> Provider | web.Response:
+    """The pre-registered provider named by ``{slug}``, or the error to return."""
+    from kiro_crew.connections.registry import is_preregistered
+
+    slug = str(request.match_info.get("slug") or "").strip().lower()
+    provider = _requested_provider(slug)
+    if provider is None or not is_preregistered(provider):
+        return _bad_request("unknown pre-registered provider", "unknown_provider")
+    return provider
+
+
+async def api_connections_oauth_clients(request: web.Request) -> web.Response:
+    """GET /api/connections/oauth-clients — every pre-registered provider's client record.
+
+    Readable by any dashboard user: the payload is what the gallery needs to
+    render a "needs configuration" card and what the Settings tab shows, and it
+    carries nothing a consent URL would not already expose (the client id) plus a
+    boolean for the secret.
+    """
+    views = await asyncio.to_thread(_oauth_client_views)
+    return web.json_response({"schema_version": 1, "clients": views})
+
+
+async def api_connections_oauth_client_put(request: web.Request) -> web.Response:
+    """PUT /api/connections/oauth-clients/{slug} — set the client id and/or secret.
+
+    Body: ``{"client_id"?: str, "client_secret"?: str, "client_secret_clear"?: bool}``.
+    Omitted fields are left as they are, so the Settings card can save the id
+    without re-entering a secret it never displays. ``client_secret`` and
+    ``client_secret_clear`` are mutually exclusive.
+    """
+    from kiro_crew.dashboard.handlers._shared import require_owner_dashboard_request
+
+    owner_denied = await require_owner_dashboard_request(request, "connections_oauth_client_put")
+    if owner_denied is not None:
+        return owner_denied
+    provider = _preregistered_provider(request)
+    if isinstance(provider, web.Response):
+        return provider
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — malformed body is a client error, not a fault
+        return _bad_request("body must be JSON", "invalid_body")
+    if not isinstance(body, dict):
+        return _bad_request("body must be a JSON object", "invalid_body")
+
+    from kiro_crew.connections.oauth_clients import (
+        client_secret_name,
+        validate_client_id,
+        validate_client_secret,
+    )
+
+    client_id: str | None = None
+    if "client_id" in body:
+        client_id = validate_client_id(body["client_id"])
+        if client_id is None:
+            return _bad_request(
+                "client_id must be 1-512 printable ASCII characters without spaces",
+                "invalid_client_id",
+            )
+    secret: str | None = None
+    if "client_secret" in body:
+        secret = validate_client_secret(body["client_secret"])
+        if secret is None:
+            return _bad_request(
+                "client_secret must be a non-empty single-line string", "invalid_client_secret"
+            )
+    clear = body.get("client_secret_clear", False)
+    if not isinstance(clear, bool):
+        return _bad_request("client_secret_clear must be a boolean", "invalid_body")
+    if clear and secret is not None:
+        return _bad_request(
+            "client_secret and client_secret_clear are mutually exclusive", "invalid_body"
+        )
+    if client_id is None and secret is None and not clear:
+        return _bad_request("nothing to update", "invalid_body")
+
+    slug = str(provider["slug"])
+    # Two stores, one record. The secret goes FIRST and the id second, and a
+    # failed id write restores the secret to what it was: the vault is the half
+    # without a locked read-modify-write, so it is the one that can be put back
+    # exactly, and the alternative -- an id that landed next to a secret that did
+    # not -- is a pair the vendor will reject on every authorization until someone
+    # notices which half is stale.
+    from kiro_crew.config import config_dir
+    from kiro_crew.secrets import SecretVault
+
+    vault = SecretVault(config_dir())
+    name = client_secret_name(slug)
+    previous_secret = None
+    if secret is not None or clear:
+        previous_secret = await asyncio.to_thread(vault.get, name)
+        if secret is not None:
+            await vault.set(name, secret)
+        else:
+            await vault.delete(name)
+
+    if client_id is not None:
+        from kiro_crew.config.loader import update_config_locked
+        from kiro_crew.connections.oauth_clients import CONFIG_CLIENTS_KEY, CONFIG_ROOT_KEY
+        from kiro_crew.dashboard.chat_utils import run_config_write
+
+        def _write_client_id(cfg: dict) -> dict:
+            root = cfg.get(CONFIG_ROOT_KEY)
+            if not isinstance(root, dict):
+                root = {}
+                cfg[CONFIG_ROOT_KEY] = root
+            clients = root.get(CONFIG_CLIENTS_KEY)
+            if not isinstance(clients, dict):
+                clients = {}
+                root[CONFIG_CLIENTS_KEY] = clients
+            record = clients.get(slug)
+            if not isinstance(record, dict):
+                record = {}
+                clients[slug] = record
+            record["client_id"] = client_id
+            return cfg
+
+        try:
+            await run_config_write(update_config_locked, mutate=_write_client_id)
+        except Exception:
+            if secret is not None or clear:
+                # Put the secret back exactly as it was before this request, so
+                # the stored pair is the pair that existed before, not a hybrid.
+                if previous_secret is None:
+                    await vault.delete(name)
+                else:
+                    await vault.set(name, previous_secret.reveal())
+            logger.warning("client_id write failed for %s; secret change rolled back", slug)
+            return web.json_response(
+                {"error": "could not write config.json", "code": "config_write_failed"},
+                status=500,
+            )
+
+    await _refresh_client_projections(slug)
+
+    changed = [
+        label
+        for label, flag in (
+            ("client_id", client_id is not None),
+            ("client_secret", secret is not None),
+            ("client_secret_cleared", clear),
+        )
+        if flag
+    ]
+    sel().log_api_access(
+        caller=str(request.get("user") or "dashboard"),
+        operation="connections_oauth_client_put",
+        outcome="completed",
+        resources=f"{slug}:{','.join(changed)}",
+    )
+    views = await asyncio.to_thread(_oauth_client_views)
+    current = next((v for v in views if v.get("slug") == slug), None)
+    return web.json_response({"ok": True, "client": current})
+
+
+async def api_connections_oauth_client_delete(request: web.Request) -> web.Response:
+    """DELETE /api/connections/oauth-clients/{slug} — forget both halves of the record.
+
+    Removes the config record and the vault entry. Environment-supplied values
+    are not touched (they are not ours to delete) and the response says so
+    through the returned record's ``*_source`` fields.
+    """
+    from kiro_crew.dashboard.handlers._shared import require_owner_dashboard_request
+
+    owner_denied = await require_owner_dashboard_request(request, "connections_oauth_client_delete")
+    if owner_denied is not None:
+        return owner_denied
+    provider = _preregistered_provider(request)
+    if isinstance(provider, web.Response):
+        return provider
+    slug = str(provider["slug"])
+
+    from kiro_crew.config import config_dir
+    from kiro_crew.config.loader import update_config_locked
+    from kiro_crew.connections.oauth_clients import (
+        CONFIG_CLIENTS_KEY,
+        CONFIG_ROOT_KEY,
+        client_secret_name,
+    )
+    from kiro_crew.dashboard.chat_utils import run_config_write
+    from kiro_crew.secrets import SecretVault
+
+    def _drop_client(cfg: dict) -> dict | None:
+        root = cfg.get(CONFIG_ROOT_KEY)
+        clients = root.get(CONFIG_CLIENTS_KEY) if isinstance(root, dict) else None
+        if not isinstance(clients, dict) or slug not in clients:
+            return None  # nothing to write
+        del clients[slug]
+        return cfg
+
+    await run_config_write(update_config_locked, mutate=_drop_client)
+    await SecretVault(config_dir()).delete(client_secret_name(slug))
+    await _refresh_client_projections(slug)
+    sel().log_api_access(
+        caller=str(request.get("user") or "dashboard"),
+        operation="connections_oauth_client_delete",
+        outcome="completed",
+        resources=slug,
+    )
+    views = await asyncio.to_thread(_oauth_client_views)
+    current = next((v for v in views if v.get("slug") == slug), None)
+    return web.json_response({"ok": True, "client": current})

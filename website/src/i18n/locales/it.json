@@ -10464,7 +10464,10 @@
       "value_prop_stripe": "Consultare clienti, pagamenti e fatture Stripe.",
       "value_prop_vercel": "Ispezionare i tuoi progetti e deployment Vercel.",
       "waiting_for_approval": "In attesa di autorizzazione",
-      "waiting_for_approval_address": "In attesa dell’indirizzo di autorizzazione… Comparirà qui alla prossima connessione dell’agente: invia un messaggio in chat per avviare subito l’autorizzazione."
+      "waiting_for_approval_address": "In attesa dell’indirizzo di autorizzazione… Comparirà qui alla prossima connessione dell’agente: invia un messaggio in chat per avviare subito l’autorizzazione.",
+      "needs_configuration": "Configurazione richiesta",
+      "needs_configuration_help": "{{provider}} richiede una configurazione iniziale: registra un'app OAuth nella console per sviluppatori di {{provider}}, poi inserisci qui il suo Client ID e il suo secret.",
+      "configure_oauth_app": "Configura l’app OAuth"
     },
     "contextBreakdown": {
       "axis_bar": "lunghezza barra ∝ √caratteri · segmenti = composizione di quel turno",
@@ -14362,6 +14365,37 @@
         "could_not_sign_out": "Impossibile uscire",
         "keep_current_sign_in": "Mantieni l’accesso attuale",
         "signed_in_body_no_refresh": "Gli agenti vengono eseguiti con questo account Kiro. Questo accesso non ha un token di aggiornamento e non può rinnovarsi da solo: accedi di nuovo prima che scada."
+      },
+      "connectionsPanel": {
+        "title": "App OAuth per Connessioni",
+        "intro": "Alcuni provider rifiutano di registrare automaticamente un client OAuth. Per ciascuno di quelli elencati sotto, segui il relativo runbook per registrare un’app nella console del fornitore, incolla in quell’app esattamente l’URI di reindirizzamento mostrato qui, poi inserisci client ID e client secret dell’app. I valori impostati tramite variabili d’ambiente hanno la precedenza su quelli salvati qui.",
+        "loading": "Caricamento…",
+        "none": "Ogni provider di questa installazione registra da sé il proprio client OAuth, quindi qui non c’è nulla da configurare.",
+        "load_failed": "Impossibile caricare le app OAuth",
+        "configured": "Configurato",
+        "not_configured": "Non configurato",
+        "card_intro": "Registra un’app nella console per sviluppatori di {{provider}} e inserisci le sue credenziali qui sotto.",
+        "open_runbook": "Apri il runbook di registrazione di {{provider}}",
+        "redirect_uri": "URI di reindirizzamento",
+        "redirect_uri_help": "Registra esattamente questo valore nella console del provider.",
+        "copy_redirect_uri": "Copia l’URI di reindirizzamento",
+        "copy": "Copia",
+        "copied": "Copiato",
+        "client_id": "Client ID",
+        "client_id_help": "Identificatore pubblico dell’app registrata. Salvato in config.json.",
+        "client_id_placeholder": "Incolla il client ID",
+        "client_secret": "Client secret",
+        "client_secret_required": "{{provider}} richiede un client secret all’endpoint dei token. Viene salvato cifrato nella cassaforte dei segreti e non viene più mostrato.",
+        "client_secret_optional": "{{provider}} accetta un client pubblico, quindi il secret è facoltativo. Viene salvato cifrato nella cassaforte dei segreti e non viene più mostrato.",
+        "client_secret_placeholder": "Incolla il client secret",
+        "set_by_environment": "Impostato dalla variabile d’ambiente {{name}}, che ha la precedenza su qualsiasi valore salvato qui.",
+        "save": "Salva",
+        "saving": "Salvataggio…",
+        "save_failed": "Impossibile salvare l’app OAuth",
+        "remove": "Rimuovi",
+        "remove_client": "Rimuovi l’app OAuth di {{provider}}",
+        "oauth_app": "App OAuth",
+        "oauth_app_search_description": "Client ID, client secret e URI di reindirizzamento per un provider che richiede un'app OAuth registrata"
       }
     },
     "settingsPage": {
@@ -14912,6 +14946,10 @@
       "secrets": {
         "label": "Secrets",
         "description": "Archivia chiavi API e credenziali in modo sicuro"
+      },
+      "connections": {
+        "label": "App OAuth",
+        "description": "App OAuth per i provider che richiedono un client registrato"
       }
     },
     "secrets": {

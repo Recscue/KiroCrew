@@ -10309,7 +10309,10 @@
       "value_prop_stripe": "Stripe-Kunden, Zahlungen und Rechnungen nachschlagen.",
       "value_prop_vercel": "Ihre Vercel-Projekte und -Deployments prüfen.",
       "waiting_for_approval": "Wartet auf Freigabe",
-      "waiting_for_approval_address": "Warten auf die Freigabeadresse… Sie erscheint hier, sobald sich der Agent das nächste Mal verbindet – senden Sie eine beliebige Chat-Nachricht, um die Autorisierung jetzt zu starten."
+      "waiting_for_approval_address": "Warten auf die Freigabeadresse… Sie erscheint hier, sobald sich der Agent das nächste Mal verbindet – senden Sie eine beliebige Chat-Nachricht, um die Autorisierung jetzt zu starten.",
+      "needs_configuration": "Konfiguration erforderlich",
+      "needs_configuration_help": "{{provider}} braucht eine einmalige Einrichtung: Registriere eine OAuth-App in der {{provider}}-Entwicklerkonsole und trage dann hier ihre Client ID und ihr Secret ein.",
+      "configure_oauth_app": "OAuth-App konfigurieren"
     },
     "contextBreakdown": {
       "axis_bar": "Balkenlänge ∝ √Zeichen · Segmente = Zusammensetzung dieses Zugs",
@@ -14183,6 +14186,37 @@
         "could_not_sign_out": "Abmelden nicht möglich",
         "keep_current_sign_in": "Aktuelle Anmeldung behalten",
         "signed_in_body_no_refresh": "Agenten laufen unter diesem Kiro-Konto. Diese Anmeldung hat kein Refresh-Token und kann sich nicht selbst erneuern – melde dich vor dem Ablauf erneut an."
+      },
+      "connectionsPanel": {
+        "title": "OAuth-Apps für Verbindungen",
+        "intro": "Einige Anbieter lehnen die automatische Registrierung eines OAuth-Clients ab. Folge für jeden Anbieter unten seinem Runbook, um in der Anbieterkonsole eine App zu registrieren, trage dort genau die hier angezeigte Weiterleitungs-URI ein und gib dann Client-ID und Client-Secret der App ein. Über Umgebungsvariablen gesetzte Werte überschreiben die hier gespeicherten.",
+        "loading": "Wird geladen…",
+        "none": "Jeder Anbieter in dieser Installation registriert seinen OAuth-Client selbst, hier gibt es also nichts zu konfigurieren.",
+        "load_failed": "OAuth-Apps konnten nicht geladen werden",
+        "configured": "Konfiguriert",
+        "not_configured": "Nicht konfiguriert",
+        "card_intro": "Registriere in der {{provider}}-Entwicklerkonsole eine App und gib unten ihre Zugangsdaten ein.",
+        "open_runbook": "Registrierungs-Runbook für {{provider}} öffnen",
+        "redirect_uri": "Weiterleitungs-URI",
+        "redirect_uri_help": "Trage genau diesen Wert in der Anbieterkonsole ein.",
+        "copy_redirect_uri": "Weiterleitungs-URI kopieren",
+        "copy": "Kopieren",
+        "copied": "Kopiert",
+        "client_id": "Client-ID",
+        "client_id_help": "Öffentliche Kennung der registrierten App. Wird in config.json gespeichert.",
+        "client_id_placeholder": "Client-ID einfügen",
+        "client_secret": "Client-Secret",
+        "client_secret_required": "{{provider}} verlangt am Token-Endpunkt ein Client-Secret. Es wird verschlüsselt im Geheimnis-Tresor gespeichert und nie wieder angezeigt.",
+        "client_secret_optional": "{{provider}} akzeptiert einen öffentlichen Client, das Secret ist daher optional. Es wird verschlüsselt im Geheimnis-Tresor gespeichert und nie wieder angezeigt.",
+        "client_secret_placeholder": "Client-Secret einfügen",
+        "set_by_environment": "Durch die Umgebungsvariable {{name}} gesetzt, die jeden hier gespeicherten Wert überschreibt.",
+        "save": "Speichern",
+        "saving": "Wird gespeichert…",
+        "save_failed": "OAuth-App konnte nicht gespeichert werden",
+        "remove": "Entfernen",
+        "remove_client": "OAuth-App für {{provider}} entfernen",
+        "oauth_app": "OAuth-App",
+        "oauth_app_search_description": "Client ID, Client-Secret und Redirect-URI für einen Anbieter, der eine registrierte OAuth-App braucht"
       }
     },
     "settingsPage": {
@@ -14720,6 +14754,10 @@
       "secrets": {
         "label": "Secrets",
         "description": "API-Schlüssel und Anmeldedaten sicher speichern"
+      },
+      "connections": {
+        "label": "OAuth-Apps",
+        "description": "OAuth-Apps für Anbieter, die einen registrierten Client benötigen"
       }
     },
     "secrets": {

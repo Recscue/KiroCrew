@@ -4043,6 +4043,46 @@ def reproject_for_ceiling_change() -> None:
     _projected_ceiling_generation = generation
 
 
+def _apply_operator_oauth_client(name: str, entry: dict) -> dict:
+    """Bind the operator's pre-registered OAuth client to a Connections server.
+
+    A no-op for every server that is not a registry provider in
+    ``auth.mode = "preregistered"`` at the registry's own URL, and for such a
+    provider the operator has not configured yet -- the entry is then emitted
+    unchanged and kiro-cli's own DCR attempt fails against the vendor exactly as
+    it would today, while the card already says why. When configured, the
+    client id, the secret (confidential clients) and the pinned redirect URI are
+    written into kiro-cli's ``oauth`` block; see
+    ``kiro_crew.connections.oauth_clients`` for the custody argument, in short:
+    the vault is the source of truth and this file is a projection of it, the
+    same footing ``headers`` secrets already have here.
+
+    Function-local imports: the connections package is otherwise off the agent
+    module's import path, and the vault is only opened when a provider actually
+    matches, so a plain rebuild with no pre-registered server never decrypts.
+    """
+
+    from kiro_crew.connections.oauth_clients import (
+        apply_preregistered_oauth_client,
+        provider_for_server,
+        resolve_oauth_client,
+    )
+
+    provider = provider_for_server(name, entry)
+    if provider is None:
+        return entry
+    from kiro_crew.secrets import SecretVault
+
+    resolved = resolve_oauth_client(
+        provider,
+        config=_load_json(_mc_config_path()) or {},
+        vault=SecretVault(config_dir()),
+    )
+    if resolved is None:
+        return entry
+    return apply_preregistered_oauth_client(entry, resolved)
+
+
 def rebuild_agent_config(
     *, clean: bool = False, refresh_forks: bool | Literal["defer"] = True
 ) -> Path:
@@ -4428,7 +4468,9 @@ def rebuild_agent_config(
                             c for c in _store_by_alias.get(_base, ()) if c.get("url") == _url
                         ]
                 _store_entry = _candidates[0] if len(_candidates) == 1 else None
-            valid_servers[name] = kiro_oauth_wire_entry(spec, store_entry=_store_entry, server=name)
+            valid_servers[name] = _apply_operator_oauth_client(
+                name, kiro_oauth_wire_entry(spec, store_entry=_store_entry, server=name)
+            )
             continue
         # Build candidate specs in priority order: the merged winner first,
         # then the same server from each source as a resolution fallback.
