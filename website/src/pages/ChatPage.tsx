@@ -346,7 +346,7 @@ import DetailPanel from '../components/DetailPanel'
 
 import type { ChatMessage } from '../types'
 
-import { shouldMountSidePanel, isSidePanelHidden, sidePanelDockMotion } from './chat/sidePanelMount'
+import { shouldMountSidePanel, isSidePanelHidden, sidePanelDockMotion, SIDE_PANEL_DOCK_TRANSITION } from './chat/sidePanelMount'
 import type { ParsedSubagentCompletion } from './chat/subagentCompletion'
 import { useConnectionsUiEnabled } from '../hooks/useConnectionsUi'
 import { useKirocrewConfigReader } from '../hooks/useKirocrewConfigReader'
@@ -9433,7 +9433,7 @@ export default function ChatPage({ mode, embedded, embedMode, popout, noUrlSync 
               initial={sidePanelDockAnim.initial}
               animate={sidePanelDockAnim.animate}
               exit={sidePanelDockAnim.exit}
-              transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
+              transition={SIDE_PANEL_DOCK_TRANSITION}
               className={sidePanelDock === 'bottom' ? 'w-full overflow-visible flex flex-col justify-end' : 'h-full overflow-visible flex justify-end'}
               style={isSidePanelHidden({ activityOpen, hasLiveAppTab, hasBrowserTab, hasTaskDashboard, searchOpen: search.isOpen }) ? { display: 'none' } : undefined}
             >
