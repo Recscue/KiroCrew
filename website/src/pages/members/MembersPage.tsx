@@ -3744,6 +3744,14 @@ export default function MembersPage() {
           const panelProps = {
             tabsCtl,
             slot: activeSlot,
+            // The member is the chat's identity while its slot is still being
+            // confirmed, so a resize started before the POST answers lands on
+            // the confirmed key, and one that spans a member switch does not.
+            slotOwner: active?.name,
+            // Sizes are SAVED only under the confirmed key: `activeSlot` holds
+            // its last good key through a refusal, and that key now belongs to
+            // another session, whose remembered size a drag here must not take.
+            persistSlot: confirmedSlot,
             hiddenViews,
             onActiveTabChange: setShownTabId,
             projectDir,

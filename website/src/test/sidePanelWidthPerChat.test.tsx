@@ -70,23 +70,28 @@ const heightKey = (slot: string) => sidePanelDimKey(SIDE_PANEL_HEIGHT_KEY, slot)
 
 let ctl: ReturnType<typeof usePanelTabs> | null = null
 
-type PanelProps = { slot: string; expanded?: boolean; fillWidth?: number; canDockBottom?: boolean }
+type PanelProps = { slot: string; slotOwner?: string; persistSlot?: string; tabsSlot?: string; expanded?: boolean; fillWidth?: number; canDockBottom?: boolean; extraReserveW?: number }
 
-function Harness({ slot, expanded, fillWidth, canDockBottom = false }: PanelProps) {
+function Harness({ slot, slotOwner, persistSlot, tabsSlot, expanded, fillWidth, canDockBottom = false, extraReserveW }: PanelProps) {
   // The strip is per slot too, so a slot switch swaps the tabs the way the chat
   // page does; the panel itself is NOT remounted, exactly as its stable-keyed
   // host wrappers keep it.
-  const tabsCtl = usePanelTabs(slot || null)
+  // `tabsSlot` lets a test hand the strip a different key than the panel, so a
+  // panel-only behavior can be exercised in isolation.
+  const tabsCtl = usePanelTabs((tabsSlot ?? slot) || null)
   ctl = tabsCtl
   return (
     <SidePanel
       tabsCtl={tabsCtl}
       slot={slot}
+      slotOwner={slotOwner}
+      persistSlot={persistSlot}
       onFileSave={async () => {}}
       onClose={() => {}}
       canDockBottom={canDockBottom}
       expanded={expanded}
       fillWidth={fillWidth}
+      extraReserveW={extraReserveW}
     />
   )
 }
@@ -333,7 +338,7 @@ describe('SidePanel size per chat', () => {
     // answers. Confirming the key while the handle is held is the same chat
     // getting its key, so the release belongs under that key; on the bare key
     // alone, the next drag in any other chat would overwrite it.
-    const { switchSlot } = renderPanel({ slot: B })
+    const { switchSlot } = renderPanel({ slot: B, slotOwner: 'member-b' })
     act(() => { ctl!.openView('git') })
     // An earlier drag leaves B's size in the panel's in-memory map, which the
     // release must replace rather than be shadowed by.
@@ -350,6 +355,83 @@ describe('SidePanel size per chat', () => {
     expect(localStorage.getItem(widthKey(B))).toBe(dragged)
     expect(localStorage.getItem(SIDE_PANEL_WIDTH_KEY)).toBe(dragged)
     expect(renderedWidth()).toBe(`${dragged}px`)
+  })
+
+  it('keeps an empty-start drag off a different chat the host switches to mid-drag', () => {
+    // A Ctrl+digit switch while the handle is held re-keys the panel from ''
+    // onto an EXISTING chat. Nothing says that chat is the one being dragged,
+    // so its own size must survive and the drag lands on the shared default.
+    localStorage.setItem(widthKey(B), '900')
+    const { switchSlot } = renderPanel({ slot: '' })
+    act(() => { ctl!.openView('git') })
+
+    startDrag(-40)
+    switchSlot(B)
+    releaseDrag(-40)
+
+    expect(localStorage.getItem(widthKey(B))).toBe('900')
+    expect(localStorage.getItem(SIDE_PANEL_WIDTH_KEY)).toBe(String(DEFAULT_W + 40))
+    expect(renderedWidth()).toBe('900px')
+  })
+
+  it('keeps an empty-start drag off the new key when the owner changes mid-drag', () => {
+    // Same as the confirm case, except the host now reports a different chat:
+    // the key is not the dragged chat's, so it must not receive the size.
+    localStorage.setItem(widthKey(B), '900')
+    const { setProps } = renderPanel({ slot: '', slotOwner: 'member-a' })
+    act(() => { ctl!.openView('git') })
+
+    startDrag(-40)
+    act(() => { setProps({ slot: B, slotOwner: 'member-b' }) })
+    releaseDrag(-40)
+
+    expect(localStorage.getItem(widthKey(B))).toBe('900')
+    expect(localStorage.getItem(SIDE_PANEL_WIDTH_KEY)).toBe(String(DEFAULT_W + 40))
+  })
+
+  it('keeps a drag off a stale key the host has not confirmed, without snapping back', () => {
+    // The Members page keeps its last good key as `slot` through a 409, and
+    // that key now belongs to another session. Its remembered size must
+    // survive a drag here; the drag goes to the shared default and stays on
+    // screen for the rest of the visit.
+    localStorage.setItem(widthKey(B), '900')
+    renderPanel({ slot: B, persistSlot: '' })
+    act(() => { ctl!.openView('git') })
+    expect(renderedWidth()).toBe('900px')
+
+    dragHandle(-40)
+
+    expect(localStorage.getItem(widthKey(B))).toBe('900')
+    expect(localStorage.getItem(SIDE_PANEL_WIDTH_KEY)).toBe('940')
+    expect(renderedWidth()).toBe('940px')
+  })
+
+  it('keeps a drag off the chat key when the host refuses it mid-drag', () => {
+    // Confirmed when the drag starts, then a reconnect re-POSTs and the endpoint
+    // refuses (409): the key now belongs to another session, so the release
+    // must not write it even though it was good at the start.
+    localStorage.setItem(widthKey(B), '900')
+    const { setProps } = renderPanel({ slot: B, persistSlot: B })
+    act(() => { ctl!.openView('git') })
+
+    startDrag(-40)
+    act(() => { setProps({ persistSlot: '' }) })
+    releaseDrag(-40)
+
+    expect(localStorage.getItem(widthKey(B))).toBe('900')
+    expect(localStorage.getItem(SIDE_PANEL_WIDTH_KEY)).toBe('940')
+    expect(renderedWidth()).toBe('940px')
+  })
+
+  it('saves under the chat key when the host confirms it by the release', () => {
+    const { setProps } = renderPanel({ slot: B, persistSlot: '' })
+    act(() => { ctl!.openView('git') })
+
+    startDrag(-40)
+    act(() => { setProps({ persistSlot: B }) })
+    releaseDrag(-40)
+
+    expect(localStorage.getItem(widthKey(B))).toBe(String(DEFAULT_W + 40))
   })
 
   describe('bottom dock height', () => {
@@ -383,7 +465,7 @@ describe('SidePanel size per chat', () => {
     })
 
     it('saves a drag under the key the host confirms mid-drag when it started on an empty slot', () => {
-      const { switchSlot } = renderPanel({ slot: B, canDockBottom: true })
+      const { switchSlot } = renderPanel({ slot: B, slotOwner: 'member-b', canDockBottom: true })
       act(() => { ctl!.openView('git') })
       dragHandleV(-40)
       switchSlot('')
@@ -398,6 +480,47 @@ describe('SidePanel size per chat', () => {
       expect(localStorage.getItem(heightKey(B))).toBe(dragged)
       expect(localStorage.getItem(SIDE_PANEL_HEIGHT_KEY)).toBe(dragged)
       expect(renderedHeight()).toBe(`${dragged}px`)
+    })
+
+    it('keeps an empty-start drag off a different chat the host switches to mid-drag', () => {
+      localStorage.setItem(heightKey(B), '500')
+      const { switchSlot } = renderPanel({ slot: '', canDockBottom: true })
+      act(() => { ctl!.openView('git') })
+
+      startDragV(-40)
+      switchSlot(B)
+      releaseDragV(-40)
+
+      expect(localStorage.getItem(heightKey(B))).toBe('500')
+      expect(localStorage.getItem(SIDE_PANEL_HEIGHT_KEY)).toBe(String(DEFAULT_H + 40))
+      expect(renderedHeight()).toBe('500px')
+    })
+
+    it('keeps a drag off a stale key the host has not confirmed, without snapping back', () => {
+      localStorage.setItem(heightKey(B), '500')
+      renderPanel({ slot: B, persistSlot: '', canDockBottom: true })
+      act(() => { ctl!.openView('git') })
+      expect(renderedHeight()).toBe('500px')
+
+      dragHandleV(-40)
+
+      expect(localStorage.getItem(heightKey(B))).toBe('500')
+      expect(localStorage.getItem(SIDE_PANEL_HEIGHT_KEY)).toBe('540')
+      expect(renderedHeight()).toBe('540px')
+    })
+
+    it('keeps a drag off the chat key when the host refuses it mid-drag', () => {
+      localStorage.setItem(heightKey(B), '500')
+      const { setProps } = renderPanel({ slot: B, persistSlot: B, canDockBottom: true })
+      act(() => { ctl!.openView('git') })
+
+      startDragV(-40)
+      act(() => { setProps({ persistSlot: '' }) })
+      releaseDragV(-40)
+
+      expect(localStorage.getItem(heightKey(B))).toBe('500')
+      expect(localStorage.getItem(SIDE_PANEL_HEIGHT_KEY)).toBe('540')
+      expect(renderedHeight()).toBe('540px')
     })
   })
 
@@ -439,6 +562,98 @@ describe('SidePanel size per chat', () => {
       expect(renderedWidth()).toBe('940px')
     })
 
+    // jsdom lays nothing out, so the painted size a real browser reports mid-ease
+    // is stubbed on the panel root. `paint` is what the edge shows right now.
+    function stubPainted(paint: { width?: number; height?: number }) {
+      const root = screen.getByTestId('side-panel-root')
+      vi.spyOn(root, 'getBoundingClientRect').mockReturnValue({
+        width: paint.width ?? 0, height: paint.height ?? 0, x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, toJSON: () => ({}),
+      } as DOMRect)
+    }
+
+    it('starts a drag grabbed mid-ease from the width on screen, not the target', () => {
+      localStorage.setItem(widthKey(A), '380')
+      localStorage.setItem(widthKey(B), '900')
+      const { switchSlot } = renderPanel({ slot: A })
+      act(() => { ctl!.openView('git') })
+      switchSlot(B)
+      // The edge is on its way from 380 to 900 and has reached 700.
+      stubPainted({ width: 700 })
+
+      startDrag(-40)
+      // No jump to 900: the gesture moves the edge the user grabbed.
+      expect(renderedWidth()).toBe('740px')
+      releaseDrag(-40)
+      expect(localStorage.getItem(widthKey(B))).toBe('740')
+      expect(localStorage.getItem(SIDE_PANEL_WIDTH_KEY)).toBe('740')
+    })
+
+    it('saves the width on screen for a press mid-ease that never moves', () => {
+      localStorage.setItem(widthKey(A), '380')
+      localStorage.setItem(widthKey(B), '900')
+      const { switchSlot } = renderPanel({ slot: A })
+      act(() => { ctl!.openView('git') })
+      switchSlot(B)
+      stubPainted({ width: 700 })
+
+      dragHandle(0)
+      // The panel stays where it was grabbed, and that is what is saved: what
+      // the user sees and what is stored are the same number.
+      expect(renderedWidth()).toBe('700px')
+      expect(localStorage.getItem(widthKey(B))).toBe('700')
+    })
+
+    it('keeps the logical width once the ease is over, as before per-chat width', async () => {
+      // A settled panel is where its target is, so a painted reading there is
+      // not used: a clamped or maximized panel must keep the remembered size.
+      localStorage.setItem(widthKey(A), '380')
+      localStorage.setItem(widthKey(B), '900')
+      const { switchSlot } = renderPanel({ slot: A })
+      act(() => { ctl!.openView('git') })
+      switchSlot(B)
+      await settleMotion()
+      stubPainted({ width: 700 })
+
+      dragHandle(-40)
+      expect(renderedWidth()).toBe('940px')
+      expect(localStorage.getItem(widthKey(B))).toBe('940')
+    })
+
+    it('starts a bottom-dock drag grabbed mid-ease from the height on screen', () => {
+      setSidePanelDock('bottom')
+      localStorage.setItem(heightKey(A), '240')
+      localStorage.setItem(heightKey(B), '600')
+      const { switchSlot } = renderPanel({ slot: A, canDockBottom: true })
+      act(() => { ctl!.openView('git') })
+      switchSlot(B)
+      stubPainted({ height: 500 })
+
+      startDragV(-40)
+      expect(renderedHeight()).toBe('540px')
+      releaseDragV(-40)
+      expect(localStorage.getItem(heightKey(B))).toBe('540')
+    })
+
+    it('still eases a chat switch after a window resize that also moved the reserve', async () => {
+      // The last resize event can change `reserveW` (a sibling column clamps to
+      // the new window), which re-runs the resize effect mid-settle. The flag
+      // that suppresses easing during a window drag must not stay latched.
+      localStorage.setItem(widthKey(A), '380')
+      localStorage.setItem(widthKey(B), '900')
+      const { setProps, switchSlot } = renderPanel({ slot: A, extraReserveW: 0 })
+      act(() => { ctl!.openView('git') })
+
+      act(() => {
+        window.dispatchEvent(new Event('resize'))
+        setProps({ extraReserveW: 100 })
+      })
+      await settleMotion()
+
+      switchSlot(B)
+      expect(renderedWidth()).toBe('900px')
+      expect(transitionStyle()).toBe(sidePanelDimTransition('width').transition)
+    })
+
     it('does not animate a drag in a chat that was never switched, before or after the release', () => {
       renderPanel({ slot: A })
       act(() => { ctl!.openView('git') })
@@ -477,5 +692,67 @@ describe('SidePanel size per chat', () => {
       expect(renderedWidth()).toBe('1200px')
       expect(transitionStyle()).toBe('')
     })
+
+    it('keeps a restore instant when it lands in the same render as a chat switch', () => {
+      // Leaving a chat maximized on its Browser tab clears `expanded` as the
+      // slot changes, so the edge moves for both reasons at once. Restore was
+      // instant before per-chat sizes, and riding the switch's tween would
+      // change that.
+      localStorage.setItem(widthKey(B), '900')
+      const { setProps } = renderPanel({ slot: A, expanded: true })
+      act(() => { ctl!.openView('git') })
+
+      act(() => { setProps({ slot: B, expanded: false }) })
+      expect(renderedWidth()).toBe('900px')
+      expect(transitionStyle()).toBe('')
+    })
+
+    it('ends a running ease when maximize lands inside it', async () => {
+      localStorage.setItem(widthKey(A), '380')
+      localStorage.setItem(widthKey(B), '900')
+      const { setProps, switchSlot } = renderPanel({ slot: A })
+      act(() => { ctl!.openView('git') })
+      switchSlot(B)
+      expect(transitionStyle()).toBe(sidePanelDimTransition('width').transition)
+
+      act(() => { setProps({ expanded: true }) })
+      expect(transitionStyle()).toBe('')
+      // And the restore after it is instant too: the mode change ended the ease.
+      act(() => { setProps({ expanded: false }) })
+      expect(renderedWidth()).toBe('900px')
+      expect(transitionStyle()).toBe('')
+      await settleMotion()
+      expect(transitionStyle()).toBe('')
+    })
+  })
+
+  // A slot key is user-supplied and the gateway preserves `__proto__` and
+  // `constructor` verbatim, so the in-memory map must not read inherited
+  // properties for them: those are non-nullish, skip the storage fallback, clamp
+  // to NaN, and a drag would then save NaN to the bare key every chat seeds from.
+  // The strip gets a plain key so only the panel's own size read is under test.
+  describe('prototype-named chats', () => {
+    for (const hostile of ['__proto__', 'constructor', 'toString']) {
+      it(`renders and saves a real width for a chat named ${hostile}`, () => {
+        renderPanel({ slot: hostile, tabsSlot: A })
+        act(() => { ctl!.openView('git') })
+        expect(renderedWidth()).toBe(`${DEFAULT_W}px`)
+        dragHandle(-40)
+        expect(renderedWidth()).toBe(`${DEFAULT_W + 40}px`)
+        expect(localStorage.getItem(SIDE_PANEL_WIDTH_KEY)).toBe(String(DEFAULT_W + 40))
+        expect(localStorage.getItem(widthKey(hostile))).toBe(String(DEFAULT_W + 40))
+      })
+
+      it(`renders and saves a real height for a chat named ${hostile}`, () => {
+        setSidePanelDock('bottom')
+        renderPanel({ slot: hostile, tabsSlot: A, canDockBottom: true })
+        act(() => { ctl!.openView('git') })
+        expect(renderedHeight()).toBe(`${DEFAULT_H}px`)
+        dragHandleV(-40)
+        expect(renderedHeight()).toBe(`${DEFAULT_H + 40}px`)
+        expect(localStorage.getItem(SIDE_PANEL_HEIGHT_KEY)).toBe(String(DEFAULT_H + 40))
+        expect(localStorage.getItem(heightKey(hostile))).toBe(String(DEFAULT_H + 40))
+      })
+    }
   })
 })

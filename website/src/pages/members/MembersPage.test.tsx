@@ -11,6 +11,7 @@ import { markSlotUnread, sseConnected, sseDisconnected, sseSlots } from '../../s
 import { MEMBERS_ROSTER_QUERY_KEY, memberBriefingQueryKey, memberThreadQueryKey } from '../../api/membersQuery'
 import { __resetPaneDraftsForTests, readPaneDraft, writePaneDraft } from '../../utils/chatPaneDrafts'
 import { getViewedThreadSlot, _resetViewedThreadForTests } from '../../lib/viewedThread'
+import { SIDE_PANEL_WIDTH_KEY, sidePanelDimKey } from '../chat/sidePanelWidth'
 import { bindSlotReadSender, emitSlotRead, _resetSlotReadRelayForTest } from '../../lib/slotReadRelay'
 import {
   __resetErrorJournalForTests,
@@ -1322,6 +1323,38 @@ describe('MembersPage side panel (Notes / Work log / Dashboard) and edit jump', 
       expect(screen.getAllByRole('tab').map((t) => t.getAttribute('aria-label'))).toEqual(['Notes', 'Work log', 'Dashboard']),
     )
     expect(screen.getByTestId('chat-pane-stub')).toHaveTextContent('member-oncall')
+  })
+
+  it('a resize after a refused re-open leaves the size of the session that now owns the cached key alone', async () => {
+    // The refusal keeps `member-oncall` as the panel's identity, so live bodies
+    // are not re-keyed, but that key now belongs to a session that is not this
+    // member's. Its remembered width must survive a drag here: the page hands
+    // the panel only the CONFIRMED key to save under, so the drag goes to the
+    // shared default.
+    const ownedKey = sidePanelDimKey(SIDE_PANEL_WIDTH_KEY, 'member-oncall')
+    await renderPage([row({ bound: true, slot_key: 'member-oncall' })])
+    fireEvent.click(await rosterRow('oncall'))
+    expect(await screen.findByTestId('chat-pane-stub')).toHaveTextContent('member-oncall')
+    ;(api.memberThread as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('409'))
+    fireEvent.click(await rosterRow('oncall'))
+    expect(await screen.findByTestId('member-thread-error')).toHaveTextContent(/Couldn't reconnect/i)
+    await waitFor(() =>
+      expect(screen.getAllByRole('tab').map((t) => t.getAttribute('aria-label'))).toEqual(['Notes', 'Work log', 'Dashboard']),
+    )
+    localStorage.setItem(ownedKey, '500')
+    localStorage.removeItem(SIDE_PANEL_WIDTH_KEY)
+
+    const grip = screen.getByRole('separator', { name: /resize panel/i })
+    act(() => {
+      fireEvent.pointerDown(grip, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 1000, clientY: 300 })
+      fireEvent.pointerMove(grip, { pointerId: 1, pointerType: 'mouse', clientX: 1020, clientY: 300 })
+    })
+    act(() => {
+      fireEvent.pointerUp(grip, { pointerId: 1, pointerType: 'mouse', clientX: 1020, clientY: 300 })
+    })
+
+    expect(localStorage.getItem(ownedKey)).toBe('500')
+    expect(localStorage.getItem(SIDE_PANEL_WIDTH_KEY)).not.toBeNull()
   })
 
   it('an overlay opened on a narrow window does not lie in wait: docking resets it, so re-narrowing finds it closed', async () => {

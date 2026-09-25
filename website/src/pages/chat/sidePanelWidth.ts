@@ -88,3 +88,17 @@ export function saveSidePanelDim(
 ): void {
   for (const key of sidePanelDimKeys(base, slot)) safeSetItem(key, String(value))
 }
+
+/**
+ * A chat's in-memory size from a slot-keyed map, or `undefined` when that chat
+ * has none yet.
+ *
+ * Own keys only. A slot key is user-supplied and the gateway keeps names like
+ * `__proto__` and `constructor` intact, so a plain index would hand back
+ * `Object.prototype` or `Object` for them. That value is not nullish, so the
+ * `?? loadSidePanelDim(...)` fallback never runs, the clamp turns it into `NaN`,
+ * and a drag then saves `NaN` to the bare key every other chat seeds from.
+ */
+export function ownDim(map: Record<string, number>, slot: string): number | undefined {
+  return Object.prototype.hasOwnProperty.call(map, slot) ? map[slot] : undefined
+}
