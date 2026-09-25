@@ -38,7 +38,7 @@ import ErrorNotice from '../../components/ErrorNotice'
 import { fetchFileRead, fileReadQueryKey, FILE_READ_STALE_MS } from '../../utils/fileReadQuery'
 import { errMessage } from '../../utils/thunkError'
 import { useReducedMotion } from '../../hooks/useReducedMotion'
-import { SIDE_PANEL_HEIGHT_KEY, SIDE_PANEL_WIDTH_KEY, loadSidePanelDim, saveSidePanelDim } from './sidePanelWidth'
+import { SIDE_PANEL_HEIGHT_KEY, SIDE_PANEL_WIDTH_KEY, loadSidePanelDim, ownDim, saveSidePanelDim } from './sidePanelWidth'
 import { SIDE_PANEL_MOTION_MS, sidePanelDimTransition } from './sidePanelMount'
 import { useAppSelector } from '../../store'
 import { selectSlotSubagents, selectSlotToolLog } from '../../store/chatSlice'
@@ -264,6 +264,14 @@ export interface SidePanelLeadingTab {
 interface SidePanelProps {
   tabsCtl: ReturnType<typeof usePanelTabs>
   slot: string
+  /** Stable identity of the chat the panel shows, held constant while the host
+   *  is still confirming its `slot` (the Members page passes the member's name,
+   *  since its slot stays '' until the thread POST answers). A resize drag that
+   *  starts on an empty slot is saved under the key confirmed mid-drag ONLY when
+   *  this identity is the same at release as at the start, so the key is that
+   *  chat's own. Unset, or changed mid-drag (a keyboard switch to another chat),
+   *  an empty-start drag is saved to the shared default alone. */
+  slotOwner?: string
   onFileOpen?: (path: string, opts?: { replaceId?: string; line?: number; endLine?: number; diffMode?: boolean; canReplace?: () => boolean }) => void
   /** Open an artifact as a panel tab (the artifact twin of onFileOpen).
    *  Threaded to the Artifacts tab so its rows open here instead of
@@ -440,7 +448,7 @@ export function sidePanelEffectiveWidth(
 }
 
 export default function SidePanel({
-  tabsCtl, slot, onFileOpen, onArtifactOpen, onAddToContext,
+  tabsCtl, slot, slotOwner, onFileOpen, onArtifactOpen, onAddToContext,
   projectDir, navLinks, navResolving, sources, selectedSourceUrl, onSelectSource, onReconcileSource,
   issues, selectedIssueUrl, onSelectIssue, onReconcileIssue,
   onAddSourceToChat, onSubmitComments, connected = true, onFileSave, onClose, panelHidden,
@@ -604,15 +612,23 @@ export default function SidePanel({
   const dimSlotRef = useRef(dimSlot); dimSlotRef.current = dimSlot
   const slotRef = useRef(slot); slotRef.current = slot
   // Where a released drag is saved: the chat it started on, with one exception.
-  // A drag that started on an empty slot and was re-keyed mid-gesture is the
-  // SAME chat receiving its key (the Members page confirming its thread), not a
-  // move to another chat, so the size goes to the confirmed key. Saved on the
-  // bare key alone, it would never become that chat's, and the next drag in
-  // any other chat would overwrite it.
-  const releaseSlot = () => dimSlotRef.current || slotRef.current
+  // A drag that started on an empty slot goes to the key confirmed mid-gesture
+  // only when the host says it is the SAME chat receiving its key: `slotOwner`
+  // unchanged from the start (the Members page confirming its thread). Saved on
+  // the bare key alone, it would never become that chat's. Without that proof
+  // the new key may be ANOTHER chat (a Ctrl+digit switch while the handle is
+  // held), whose own size must not be overwritten, so the drag stays on ''.
+  const ownerRef = useRef(slotOwner); ownerRef.current = slotOwner
+  const dragOwnerRef = useRef<string | undefined>(undefined)
+  const releaseSlot = () => {
+    const started = dimSlotRef.current
+    if (started) return started
+    const owner = dragOwnerRef.current
+    return owner && owner === ownerRef.current ? slotRef.current : ''
+  }
   const [widthBySlot, setWidthBySlot] = useState<Record<string, number>>({})
   const width = useMemo(
-    () => widthBySlot[dimSlot] ?? loadSidePanelDim({ base: SIDE_PANEL_WIDTH_KEY, slot: dimSlot, min: MIN_W, fallback: 460 }),
+    () => ownDim(widthBySlot, dimSlot) ?? loadSidePanelDim({ base: SIDE_PANEL_WIDTH_KEY, slot: dimSlot, min: MIN_W, fallback: 460 }),
     [widthBySlot, dimSlot, MIN_W],
   )
   const setWidth = useCallback((w: number) => {
@@ -628,7 +644,7 @@ export default function SidePanel({
   const MIN_H = 200
   const [heightBySlot, setHeightBySlot] = useState<Record<string, number>>({})
   const height = useMemo(
-    () => heightBySlot[dimSlot] ?? loadSidePanelDim({ base: SIDE_PANEL_HEIGHT_KEY, slot: dimSlot, min: MIN_H, fallback: 360 }),
+    () => ownDim(heightBySlot, dimSlot) ?? loadSidePanelDim({ base: SIDE_PANEL_HEIGHT_KEY, slot: dimSlot, min: MIN_H, fallback: 360 }),
     [heightBySlot, dimSlot, MIN_H],
   )
   const setHeight = useCallback((h: number) => {
@@ -723,6 +739,7 @@ export default function SidePanel({
     threshold: 0,
     onStart: () => {
       setDragSlot(slot)
+      dragOwnerRef.current = slotOwner
       startWRef.current = widthRef.current
       dragWRef.current = widthRef.current
     },
@@ -757,6 +774,7 @@ export default function SidePanel({
     threshold: 0,
     onStart: () => {
       setDragSlot(slot)
+      dragOwnerRef.current = slotOwner
       startHRef.current = heightRef.current
       dragHRef.current = heightRef.current
     },
