@@ -1291,9 +1291,16 @@ function ComposerBox({ inputRef, autoFocus, actions, copiedId, hintIdBase, onAct
 
   const autoGrow = useCallback((el: HTMLTextAreaElement) => {
     el.style.height = 'auto'
-    const next = Math.min(el.scrollHeight, COMPOSER_MAX_INPUT_H)
+    // scrollHeight excludes the border, but `height` on a border-box element
+    // includes it, so without this the box shrank 2px on the first keystroke
+    // and the controls centered against it sat 1px low.
+    const border = el.offsetHeight - el.clientHeight
+    const needed = el.scrollHeight + border
+    const next = Math.min(needed, COMPOSER_MAX_INPUT_H)
     el.style.height = next + 'px'
-    el.style.overflowY = el.scrollHeight > COMPOSER_MAX_INPUT_H ? 'auto' : 'hidden'
+    // Compared with the border included, like the height: a draft whose text
+    // fits the capped box only without its border would otherwise clip.
+    el.style.overflowY = needed > COMPOSER_MAX_INPUT_H ? 'auto' : 'hidden'
     onGrow()
   }, [onGrow])
 
@@ -1307,7 +1314,10 @@ function ComposerBox({ inputRef, autoFocus, actions, copiedId, hintIdBase, onAct
   const iconBtn = 'flex items-center justify-center w-7 h-7 rounded-md text-muted hover:text-accent hover:bg-bg-hover transition-colors cursor-pointer bg-transparent border-none'
 
   const controls = (
-    <div className={`flex items-center gap-1 shrink-0 ${stacked ? 'justify-between' : ''}`}>
+    // In a row the controls are as tall as a ONE-line input (1px border, 6px
+    // padding, 20px line, top and bottom), so they center on it and stay
+    // level with its first line when a long draft grows the box downward.
+    <div className={`flex items-center gap-1 shrink-0 ${stacked ? 'justify-between' : 'h-[34px]'}`}>
       <button
         type="button"
         className="flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[12px] font-medium text-accent hover:bg-bg-hover transition-colors cursor-pointer bg-transparent border-none whitespace-nowrap disabled:opacity-40 disabled:cursor-default"
