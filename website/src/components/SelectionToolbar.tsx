@@ -6,6 +6,7 @@ import { copyToClipboard } from '../utils/clipboard'
 import { isTouchDevice } from '../utils/isTouchDevice'
 import { containedSelectionRange } from '../utils/selectionContainment'
 import { useImeGuard } from '../hooks/useImeGuard'
+import { measureAutoGrowTextarea } from '../hooks/useAutoGrowTextarea'
 import ErrorNotice from './ErrorNotice'
 import { i18nT } from '../i18n/t'
 import { isEditableTarget } from '../utils/editableTarget'
@@ -1290,17 +1291,10 @@ function ComposerBox({ inputRef, autoFocus, actions, copiedId, hintIdBase, onAct
   }, [autoFocus, inputRef])
 
   const autoGrow = useCallback((el: HTMLTextAreaElement) => {
-    el.style.height = 'auto'
-    // scrollHeight excludes the border, but `height` on a border-box element
-    // includes it, so without this the box shrank 2px on the first keystroke
-    // and the controls centered against it sat 1px low.
-    const border = el.offsetHeight - el.clientHeight
-    const needed = el.scrollHeight + border
-    const next = Math.min(needed, COMPOSER_MAX_INPUT_H)
-    el.style.height = next + 'px'
-    // Compared with the border included, like the height: a draft whose text
-    // fits the capped box only without its border would otherwise clip.
-    el.style.overflowY = needed > COMPOSER_MAX_INPUT_H ? 'auto' : 'hidden'
+    // The shared measure counts the border, which scrollHeight leaves out, so
+    // the box keeps its resting height on the first keystroke and a draft at
+    // the cap scrolls instead of clipping its last line.
+    measureAutoGrowTextarea(el, COMPOSER_MAX_INPUT_H)
     onGrow()
   }, [onGrow])
 
