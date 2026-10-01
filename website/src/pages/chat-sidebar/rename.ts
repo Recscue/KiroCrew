@@ -2,7 +2,7 @@
  *  plumbing that keeps a rename opened from a menu from being cancelled by the menu's
  *  own focus restore. */
 import { useState, useRef, useCallback, useEffect, type MutableRefObject } from 'react'
-import { useAutoGrowTextarea } from '../../hooks/useAutoGrowTextarea'
+import { measureAutoGrowTextarea, useAutoGrowTextarea } from '../../hooks/useAutoGrowTextarea'
 import { sseSlotTitle } from '../../store/dashboardSlice'
 import { api } from '../../api/client'
 import { errMessage } from '../../utils/thunkError'
@@ -179,11 +179,9 @@ export function useSessionRename({ dispatch, store, queryClient }: {
         // save, reopening the same slot sets renameValue to the identical title,
         // so useAutoGrowTextarea's value-keyed effect never fires and the freshly
         // mounted textarea would otherwise sit at its 1-line resting height and
-        // clip a long name. Mirror the hook's measure here so every open shows
-        // the full name.
-        el.style.height = 'auto'
-        el.style.height = `${Math.min(el.scrollHeight, RENAME_MAX_H)}px`
-        el.style.overflowY = el.scrollHeight > RENAME_MAX_H ? 'auto' : 'hidden'
+        // clip a long name. Run the hook's own measure here so every open shows
+        // the full name, border included.
+        measureAutoGrowTextarea(el, RENAME_MAX_H)
       }
     })
     return () => cancelAnimationFrame(raf)

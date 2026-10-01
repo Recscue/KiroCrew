@@ -481,6 +481,7 @@ describe('SelectionToolbar — composer mode', () => {
     // jsdom has no layout: stand in a one-line box, 34px tall with a 1px
     // border, whose scrollHeight (padding + content, no border) is 32px.
     Object.defineProperty(input, 'offsetHeight', { value: 34, configurable: true })
+    Object.defineProperty(input, 'offsetParent', { value: document.body, configurable: true })
     Object.defineProperty(input, 'clientHeight', { value: 32, configurable: true })
     Object.defineProperty(input, 'scrollHeight', { value: 32, configurable: true })
     fireEvent.change(input, { target: { value: 'a' } })
@@ -493,6 +494,7 @@ describe('SelectionToolbar — composer mode', () => {
     // 159px of text in a 1px-bordered box: 161px needed, capped at 160, so the
     // content box is 158px and the last line would be cut off unless it scrolls.
     Object.defineProperty(input, 'offsetHeight', { value: 160, configurable: true })
+    Object.defineProperty(input, 'offsetParent', { value: document.body, configurable: true })
     Object.defineProperty(input, 'clientHeight', { value: 158, configurable: true })
     Object.defineProperty(input, 'scrollHeight', { value: 159, configurable: true })
     fireEvent.change(input, { target: { value: 'long draft' } })
